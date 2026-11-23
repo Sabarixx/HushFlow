@@ -3,7 +3,11 @@ DesktopHUD - High-Resolution 60 FPS Native Layered Floating Widget for WhisperFl
 Replicates Wispr Flow's left-edge docked pill:
 - Native Windows 32-bit ARGB Layered Window (UpdateLayeredWindow)
 - Per-Monitor V2 DPI awareness (zero scaling blur on 125%/150% laptop screens)
-- Topmost window positioning (HWND_TOPMOST)
+- Topmost window positioning (HWND_TOPMOST) with active Z-order enforcement
+- Dynamic Screen Work Area Clamping (SPI_GETWORKAREA): Never slips under taskbar or off-screen
+- Anti-Alt-Tab Resistance: Retains topmost priority across all app/desktop switches
+- Self-Healing Watchdog: Automatically recreates or restores window if ever closed/hidden
+- Thread-Safe Architecture: Dedicated GUI thread handles all window creation and message dispatch
 - 60 FPS silky smooth pulse, waveform, and spinner animations
 - Vertically draggable along screen edge with persistent position
 """
@@ -54,6 +58,17 @@ class BLENDFUNCTION(ctypes.Structure):
         ("AlphaFormat", ctypes.c_byte),
     ]
 
+def get_screen_work_area():
+    """Retrieve true desktop work area excluding Windows taskbars and docked appbars."""
+    try:
+        rect = wintypes.RECT()
+        ctypes.windll.user32.SystemParametersInfoW(win32con.SPI_GETWORKAREA, 0, ctypes.byref(rect), 0)
+        return rect.left, rect.top, rect.right, rect.bottom
+    except Exception:
+        w = win32api.GetSystemMetrics(win32con.SM_CXSCREEN)
+        h = win32api.GetSystemMetrics(win32con.SM_CYSCREEN)
+        return 0, 0, w, h
+
 class DesktopHUD:
     def __init__(self, config_path=None, visible=True):
         self.config_path = config_path
@@ -64,11 +79,8 @@ class DesktopHUD:
         self.is_hovered = False
         self.is_dragging = False
         self.drag_offset_y = 0
+        self._request_recreate = False
 
-        # Load screen metrics & dock position
-        self.screen_w = win32api.GetSystemMetrics(win32con.SM_CXSCREEN)
-        self.screen_h = win32api.GetSystemMetrics(win32con.SM_CYSCREEN)
-        
         # Base dimensions (HiDPI native)
         self.collapsed_w = 46
         self.expanded_w = 230
@@ -76,13 +88,14 @@ class DesktopHUD:
         self.target_w = float(self.collapsed_w)
         self.h = 44
         self.x = 0
-        # Default y=360 so it sits nicely above any other widgets at y=480
         self.y = self._load_dock_y()
 
         self.anim_tick = 0
         self.done_timestamp = 0
+        self.last_topmost_reassert = 0
         self.hwnd = None
         self.ready_event = threading.Event()
+        self.lock = threading.Lock()
 
         try:
             self.font_main = ImageFont.truetype("segoeuib.ttf", 13)
@@ -95,19 +108,30 @@ class DesktopHUD:
         self.thread.start()
         self.ready_event.wait(timeout=2.0)
 
+    def _get_safe_y(self, val):
+        """Clamp Y strictly inside the visible desktop work area (never off-screen or under taskbar)."""
+        _, top, _, bottom = get_screen_work_area()
+        min_y = top + 10
+        max_y = max(min_y, bottom - self.h - 10)
+        if val is None or val > max_y or val < min_y:
+            # Safe default: ~35% down the screen, comfortably above the taskbar
+            return max(min_y, min(max_y, top + int((bottom - top) * 0.35)))
+        return val
+
     def _load_dock_y(self):
-        default_y = 360
+        val = 360
         if self.config_path and os.path.exists(self.config_path):
             try:
                 with open(self.config_path, "r", encoding="utf-8") as f:
                     cfg = json.load(f)
-                    val = int(cfg.get("dock_y", default_y))
-                    return max(10, min(self.screen_h - self.h - 10, val))
+                    if "dock_y" in cfg:
+                        val = int(cfg["dock_y"])
             except Exception:
                 pass
-        return default_y
+        return self._get_safe_y(val)
 
     def _save_dock_y(self):
+        self.y = self._get_safe_y(self.y)
         if self.config_path and os.path.exists(self.config_path):
             try:
                 with open(self.config_path, "r+", encoding="utf-8") as f:
@@ -131,8 +155,7 @@ class DesktopHUD:
             if self.is_dragging:
                 cursor_y = win32api.GetCursorPos()[1]
                 new_y = cursor_y - self.drag_offset_y
-                new_y = max(10, min(self.screen_h - self.h - 10, new_y))
-                self.y = new_y
+                self.y = self._get_safe_y(new_y)
             return 0
 
         elif msg == win32con.WM_LBUTTONUP:
@@ -142,108 +165,144 @@ class DesktopHUD:
                 self._save_dock_y()
             return 0
 
+        elif msg == win32con.WM_CLOSE:
+            # Block WM_CLOSE so Alt+F4 or window managers cannot close the HUD!
+            return 0
+
+        elif msg in (win32con.WM_DISPLAYCHANGE, 0x02E0):  # 0x02E0 = WM_DPICHANGED
+            self.y = self._get_safe_y(self.y)
+            return 0
+
         elif msg == win32con.WM_DESTROY:
             win32gui.PostQuitMessage(0)
             return 0
 
         return win32gui.DefWindowProc(hwnd, msg, wparam, lparam)
 
-    def _window_thread(self):
-        wc = win32gui.WNDCLASS()
-        wc.lpfnWndProc = self._wnd_proc
-        wc.lpszClassName = "WhisperFlow_Pro_HUD_Class_V2"
-        wc.hInstance = win32api.GetModuleHandle(None)
-        wc.hCursor = win32gui.LoadCursor(0, win32con.IDC_ARROW)
-        try:
-            win32gui.RegisterClass(wc)
-        except Exception:
-            pass
+    def _create_or_restore_window(self):
+        """Create or restore the layered HWND on the GUI thread."""
+        with self.lock:
+            if self.hwnd and win32gui.IsWindow(self.hwnd):
+                return
 
-        ex_style = (win32con.WS_EX_LAYERED | 
-                    win32con.WS_EX_TOPMOST | 
-                    win32con.WS_EX_TOOLWINDOW | 
-                    win32con.WS_EX_NOACTIVATE)
-        style = win32con.WS_POPUP
+            wc = win32gui.WNDCLASS()
+            wc.lpfnWndProc = self._wnd_proc
+            wc.lpszClassName = "WhisperFlow_Pro_HUD_Class_V2"
+            wc.hInstance = win32api.GetModuleHandle(None)
+            wc.hCursor = win32gui.LoadCursor(0, win32con.IDC_ARROW)
+            try:
+                win32gui.RegisterClass(wc)
+            except Exception:
+                pass
 
-        self.hwnd = win32gui.CreateWindowEx(
-            ex_style,
-            "WhisperFlow_Pro_HUD_Class_V2",
-            "WhisperFlow HUD",
-            style,
-            self.x, self.y, self.expanded_w, self.h,
-            0, 0, wc.hInstance, None
-        )
+            ex_style = (win32con.WS_EX_LAYERED | 
+                        win32con.WS_EX_TOPMOST | 
+                        win32con.WS_EX_TOOLWINDOW | 
+                        win32con.WS_EX_NOACTIVATE)
+            style = win32con.WS_POPUP
 
-        # Make sure initial frame renders immediately before showing
-        try:
-            self._render_and_update()
-        except Exception:
-            pass
-
-        if self.visible:
-            win32gui.ShowWindow(self.hwnd, win32con.SW_SHOWNOACTIVATE)
-            win32gui.SetWindowPos(
-                self.hwnd,
-                win32con.HWND_TOPMOST,
-                self.x, self.y, int(self.current_w), self.h,
-                win32con.SWP_NOACTIVATE | win32con.SWP_SHOWWINDOW
+            self.hwnd = win32gui.CreateWindowEx(
+                ex_style,
+                "WhisperFlow_Pro_HUD_Class_V2",
+                "WhisperFlow HUD",
+                style,
+                self.x, self.y, self.expanded_w, self.h,
+                0, 0, wc.hInstance, None
             )
 
+            try:
+                self._render_and_update()
+            except Exception:
+                pass
+
+            if self.visible:
+                win32gui.ShowWindow(self.hwnd, win32con.SW_SHOWNOACTIVATE)
+                win32gui.SetWindowPos(
+                    self.hwnd,
+                    win32con.HWND_TOPMOST,
+                    self.x, self.y, int(self.current_w), self.h,
+                    win32con.SWP_NOACTIVATE | win32con.SWP_SHOWWINDOW
+                )
+
+    def _window_thread(self):
+        self._create_or_restore_window()
         self.ready_event.set()
 
         last_frame_time = time.time()
         while self.running:
-            now = time.time()
-            dt = now - last_frame_time
-            if dt >= 0.016:  # ~60 FPS
-                last_frame_time = now
-                self.anim_tick += 1
-
-                if self.state == "done" and self.done_timestamp > 0:
-                    if now - self.done_timestamp > 1.2:
-                        self.state = "idle"
-                        self.custom_text = None
-                        self.done_timestamp = 0
-
-                # Real-time cursor polling for instant hover expand & collapse
-                if not self.is_dragging:
-                    try:
-                        cursor_x, cursor_y = win32api.GetCursorPos()
-                        # Cursor must be inside current visible bounds
-                        self.is_hovered = (
-                            self.x <= cursor_x <= (self.x + int(self.current_w) + 2) and
-                            self.y <= cursor_y <= (self.y + self.h)
-                        )
-                    except Exception:
-                        pass
-                else:
-                    self.is_hovered = True
-
-                should_expand = self.is_hovered or (self.state in ["recording", "transcribing", "done"])
-                self.target_w = float(self.expanded_w if should_expand else self.collapsed_w)
-
-                self.current_w += (self.target_w - self.current_w) * 0.28
-                if abs(self.current_w - self.target_w) < 0.5:
-                    self.current_w = self.target_w
-
-                if self.visible and self.hwnd:
-                    try:
-                        self._render_and_update()
-                        w_current = max(self.collapsed_w, int(round(self.current_w)))
-                        win32gui.SetWindowPos(
-                            self.hwnd,
-                            0,
-                            self.x, self.y, w_current, self.h,
-                            win32con.SWP_NOACTIVATE | win32con.SWP_NOMOVE | win32con.SWP_NOZORDER | win32con.SWP_NOREDRAW
-                        )
-                    except Exception:
-                        pass
-
             try:
-                win32gui.PumpWaitingMessages()
+                now = time.time()
+                dt = now - last_frame_time
+                if dt >= 0.016:  # ~60 FPS
+                    last_frame_time = now
+                    self.anim_tick += 1
+
+                    if self.state == "done" and self.done_timestamp > 0:
+                        if now - self.done_timestamp > 1.2:
+                            self.state = "idle"
+                            self.custom_text = None
+                            self.done_timestamp = 0
+
+                    # Real-time cursor polling for instant hover expand & collapse
+                    if not self.is_dragging:
+                        try:
+                            cursor_x, cursor_y = win32api.GetCursorPos()
+                            self.is_hovered = (
+                                self.x <= cursor_x <= (self.x + int(self.current_w) + 2) and
+                                self.y <= cursor_y <= (self.y + self.h)
+                            )
+                        except Exception:
+                            pass
+                    else:
+                        self.is_hovered = True
+
+                    should_expand = self.is_hovered or (self.state in ["recording", "transcribing", "done"])
+                    self.target_w = float(self.expanded_w if should_expand else self.collapsed_w)
+
+                    self.current_w += (self.target_w - self.current_w) * 0.28
+                    if abs(self.current_w - self.target_w) < 0.5:
+                        self.current_w = self.target_w
+
+                    if self.visible:
+                        # Auto-heal: If window was flagged for recreate or destroyed, restore on GUI thread!
+                        if self._request_recreate or not self.hwnd or not win32gui.IsWindow(self.hwnd):
+                            self._request_recreate = False
+                            self._create_or_restore_window()
+
+                        if self.hwnd and win32gui.IsWindow(self.hwnd):
+                            try:
+                                self._render_and_update()
+                                w_current = max(self.collapsed_w, int(round(self.current_w)))
+
+                                # Re-assert HWND_TOPMOST periodically so Alt+Tab, Chrome, Claude, or CLI
+                                # never push the HUD behind active windows!
+                                reassert_topmost = (now - self.last_topmost_reassert > 0.3)
+                                if reassert_topmost:
+                                    self.last_topmost_reassert = now
+                                    win32gui.SetWindowPos(
+                                        self.hwnd,
+                                        win32con.HWND_TOPMOST,
+                                        self.x, self.y, w_current, self.h,
+                                        win32con.SWP_NOACTIVATE | win32con.SWP_SHOWWINDOW
+                                    )
+                                else:
+                                    win32gui.SetWindowPos(
+                                        self.hwnd,
+                                        0,
+                                        self.x, self.y, w_current, self.h,
+                                        win32con.SWP_NOACTIVATE | win32con.SWP_NOMOVE | win32con.SWP_NOZORDER | win32con.SWP_NOREDRAW
+                                    )
+                            except Exception:
+                                pass
+
+                try:
+                    win32gui.PumpWaitingMessages()
+                except Exception:
+                    pass
+                time.sleep(0.005)
+
             except Exception:
-                pass
-            time.sleep(0.005)
+                time.sleep(0.02)
 
         if self.hwnd:
             try:
@@ -252,6 +311,9 @@ class DesktopHUD:
                 pass
 
     def _render_and_update(self):
+        if not self.hwnd or not win32gui.IsWindow(self.hwnd):
+            return
+
         w = max(self.collapsed_w, int(round(self.current_w)))
         h = self.h
 
@@ -269,7 +331,7 @@ class DesktopHUD:
                 width=1
             )
 
-        # Obsidian Pill Body (#18181b with 1px border)
+        # Obsidian Pill Body (#161618 with 1px border)
         bg_color = (22, 22, 24, 250)
         border_color = (60, 60, 65, 255)
         d.rounded_rectangle((2, 2, w - 2, h - 2), radius=19, fill=bg_color, outline=border_color, width=1)
@@ -340,65 +402,129 @@ class DesktopHUD:
         raw_bytes = bgra.tobytes()
 
         hdc_screen = win32gui.GetDC(0)
+        if not hdc_screen:
+            return
+
         hdc_mem = win32gui.CreateCompatibleDC(hdc_screen)
+        if not hdc_mem:
+            win32gui.ReleaseDC(0, hdc_screen)
+            return
 
-        bmi = BITMAPINFOHEADER()
-        bmi.biSize = ctypes.sizeof(BITMAPINFOHEADER)
-        bmi.biWidth = w
-        bmi.biHeight = -h
-        bmi.biPlanes = 1
-        bmi.biBitCount = 32
-        bmi.biCompression = 0
+        hbmp = None
+        old_bmp = None
+        try:
+            bmi = BITMAPINFOHEADER()
+            bmi.biSize = ctypes.sizeof(BITMAPINFOHEADER)
+            bmi.biWidth = w
+            bmi.biHeight = -h
+            bmi.biPlanes = 1
+            bmi.biBitCount = 32
+            bmi.biCompression = 0
 
-        p_bits = ctypes.c_void_p()
-        hbmp = ctypes.windll.gdi32.CreateDIBSection(
-            hdc_mem,
-            ctypes.byref(bmi),
-            0,
-            ctypes.byref(p_bits),
-            None,
-            0
-        )
+            p_bits = ctypes.c_void_p()
+            hbmp = ctypes.windll.gdi32.CreateDIBSection(
+                hdc_mem,
+                ctypes.byref(bmi),
+                0,
+                ctypes.byref(p_bits),
+                None,
+                0
+            )
 
-        ctypes.memmove(p_bits, raw_bytes, len(raw_bytes))
-        old_bmp = win32gui.SelectObject(hdc_mem, hbmp)
+            if not hbmp or not p_bits.value:
+                return
 
-        blend = BLENDFUNCTION()
-        blend.BlendOp = 0
-        blend.BlendFlags = 0
-        blend.SourceConstantAlpha = 255
-        blend.AlphaFormat = 1  # AC_SRC_ALPHA
+            ctypes.memmove(p_bits, raw_bytes, len(raw_bytes))
+            old_bmp = win32gui.SelectObject(hdc_mem, hbmp)
 
-        pt_dst = wintypes.POINT(self.x, self.y)
-        size_dst = wintypes.SIZE(w, h)
-        pt_src = wintypes.POINT(0, 0)
+            blend = BLENDFUNCTION()
+            blend.BlendOp = 0
+            blend.BlendFlags = 0
+            blend.SourceConstantAlpha = 255
+            blend.AlphaFormat = 1  # AC_SRC_ALPHA
 
-        ctypes.windll.user32.UpdateLayeredWindow(
-            self.hwnd,
-            hdc_screen,
-            ctypes.byref(pt_dst),
-            ctypes.byref(size_dst),
-            hdc_mem,
-            ctypes.byref(pt_src),
-            0,
-            ctypes.byref(blend),
-            2  # ULW_ALPHA
-        )
+            pt_dst = wintypes.POINT(self.x, self.y)
+            size_dst = wintypes.SIZE(w, h)
+            pt_src = wintypes.POINT(0, 0)
 
-        win32gui.SelectObject(hdc_mem, old_bmp)
-        win32gui.DeleteObject(hbmp)
-        win32gui.DeleteDC(hdc_mem)
-        win32gui.ReleaseDC(0, hdc_screen)
+            ctypes.windll.user32.UpdateLayeredWindow(
+                self.hwnd,
+                hdc_screen,
+                ctypes.byref(pt_dst),
+                ctypes.byref(size_dst),
+                hdc_mem,
+                ctypes.byref(pt_src),
+                0,
+                ctypes.byref(blend),
+                2  # ULW_ALPHA
+            )
+        finally:
+            if old_bmp:
+                try:
+                    win32gui.SelectObject(hdc_mem, old_bmp)
+                except Exception:
+                    pass
+            if hbmp:
+                try:
+                    win32gui.DeleteObject(hbmp)
+                except Exception:
+                    pass
+            if hdc_mem:
+                try:
+                    win32gui.DeleteDC(hdc_mem)
+                except Exception:
+                    pass
+            if hdc_screen:
+                try:
+                    win32gui.ReleaseDC(0, hdc_screen)
+                except Exception:
+                    pass
+
+    def ensure_alive(self):
+        """Active watchdog called by main loop to guarantee window and thread stay alive."""
+        if not self.running:
+            return
+
+        # Ensure thread is alive
+        if not self.thread or not self.thread.is_alive():
+            self.thread = threading.Thread(target=self._window_thread, daemon=True)
+            self.thread.start()
+
+        # Signal GUI thread to recreate window if invalid
+        if self.visible:
+            if not self.hwnd or not win32gui.IsWindow(self.hwnd):
+                self._request_recreate = True
+            elif win32gui.IsWindow(self.hwnd):
+                try:
+                    win32gui.SetWindowPos(
+                        self.hwnd,
+                        win32con.HWND_TOPMOST,
+                        self.x, self.y, int(self.current_w), self.h,
+                        win32con.SWP_NOACTIVATE | win32con.SWP_SHOWWINDOW
+                    )
+                except Exception:
+                    pass
 
     def set_state(self, state, text=None):
         self.state = state
         self.custom_text = text
         if state == "done":
             self.done_timestamp = time.time()
+        # Immediately re-assert topmost on state transition
+        if self.visible and self.hwnd and win32gui.IsWindow(self.hwnd):
+            try:
+                win32gui.SetWindowPos(
+                    self.hwnd,
+                    win32con.HWND_TOPMOST,
+                    self.x, self.y, int(self.current_w), self.h,
+                    win32con.SWP_NOACTIVATE | win32con.SWP_SHOWWINDOW
+                )
+            except Exception:
+                pass
 
     def set_visible(self, visible):
         self.visible = visible
-        if self.hwnd:
+        if self.hwnd and win32gui.IsWindow(self.hwnd):
             cmd = win32con.SW_SHOWNOACTIVATE if visible else win32con.SW_HIDE
             win32gui.ShowWindow(self.hwnd, cmd)
             if visible:
@@ -411,3 +537,8 @@ class DesktopHUD:
 
     def close(self):
         self.running = False
+        if self.hwnd and win32gui.IsWindow(self.hwnd):
+            try:
+                win32gui.DestroyWindow(self.hwnd)
+            except Exception:
+                pass

@@ -218,8 +218,11 @@ def is_hotkey_down():
     """
     STRICT SINGLE HOTKEY: ONLY [Ctrl + Alt].
     Zero Windows key checks to avoid conflict with Start Menu & Wispr Flow.
+    Ignores hotkey if Tab is pressed (prevents Alt+Tab app switching from triggering recording).
     """
     try:
+        if keyboard.is_pressed('tab'):
+            return False
         ctrl = keyboard.is_pressed('ctrl') or keyboard.is_pressed('left ctrl') or keyboard.is_pressed('right ctrl')
         alt = keyboard.is_pressed('alt') or keyboard.is_pressed('left alt') or keyboard.is_pressed('right alt')
         return ctrl and alt
@@ -491,8 +494,14 @@ def main():
 
     keyboard.add_hotkey('ctrl+shift+q', lambda: sys.exit(0))
 
+    last_hud_watchdog = 0
     try:
         while True:
+            now_loop = time.time()
+            if hud and (now_loop - last_hud_watchdog > 1.0):
+                last_hud_watchdog = now_loop
+                hud.ensure_alive()
+
             hotkey_active = is_hotkey_down()
 
             if hotkey_active and not is_recording:
