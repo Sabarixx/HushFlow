@@ -4,15 +4,15 @@
 
 <br/><br/>
 
-[![Platform](https://img.shields.io/badge/Platform-Windows%2010%20%7C%2011%20(x64)-0078D6?style=for-the-badge&logo=windows&logoColor=white)](https://github.com/sabarixx/WhisperFlow)
+[![Platform](https://img.shields.io/badge/Platform-Windows%2010%20%7C%2011%20(x64)-0078D6?style=for-the-badge&logo=windows&logoColor=white)](https://github.com/sabarixx/HushFlow)
 [![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
 [![Engine](https://img.shields.io/badge/Engine-whisper.cpp%20(GGML)-FF6F00?style=for-the-badge&logo=cplusplus&logoColor=white)](https://github.com/ggerganov/whisper.cpp)
 [![License](https://img.shields.io/badge/License-MIT-22c55e?style=for-the-badge&logo=open-source-initiative&logoColor=white)](LICENSE)
-[![Privacy](https://img.shields.io/badge/Privacy-100%25%20Air--Gapped-06b6d4?style=for-the-badge&logo=shield&logoColor=white)](https://github.com/sabarixx/WhisperFlow)
+[![Privacy](https://img.shields.io/badge/Privacy-100%25%20Air--Gapped-06b6d4?style=for-the-badge&logo=shield&logoColor=white)](https://github.com/sabarixx/HushFlow)
 
 <br/>
 
-<a href="https://github.com/sabarixx/WhisperFlow/archive/refs/heads/main.zip">
+<a href="https://github.com/sabarixx/HushFlow/archive/refs/heads/main.zip">
   <img src="https://img.shields.io/badge/%E2%9E%A4%20DOWNLOAD%20WHISPERFLOW%20(LATEST%20ZIP)-22c55e?style=for-the-badge&logo=windows&logoColor=white" height="44" alt="Download WhisperFlow"/>
 </a>
 &nbsp;&nbsp;
@@ -124,7 +124,7 @@ flowchart TD
 
 ### Option 1: Automated 1-Click Setup (Recommended)
 
-1. [**Download WhisperFlow ZIP**](https://github.com/sabarixx/WhisperFlow/archive/refs/heads/main.zip) and extract it to any folder (e.g. `C:\Tools\WhisperFlow`).
+1. [**Download WhisperFlow ZIP**](https://github.com/sabarixx/HushFlow/archive/refs/heads/main.zip) and extract it to any folder (e.g. `C:\Tools\WhisperFlow`).
 2. Double-click **`install.bat`**.
    - Validates Python 3.10+.
    - Installs required lightweight packages (`sounddevice`, `numpy`, `pywin32`, `requests`).
@@ -136,7 +136,7 @@ flowchart TD
 
 ```powershell
 # 1. Clone the repository
-git clone https://github.com/sabarixx/WhisperFlow.git
+git clone https://github.com/sabarixx/HushFlow.git
 cd WhisperFlow
 
 # 2. Install requirements
