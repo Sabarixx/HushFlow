@@ -1,0 +1,360 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 460" width="1200" height="460" fill="none">
+  <defs>
+    <!-- Background Gradients -->
+    <linearGradient id="bg-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#060913" />
+      <stop offset="45%" stop-color="#0b1329" />
+      <stop offset="80%" stop-color="#0e1726" />
+      <stop offset="100%" stop-color="#05070d" />
+    </linearGradient>
+
+    <!-- Glowing Orbs -->
+    <radialGradient id="cyan-glow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#00f2fe" stop-opacity="0.38" />
+      <stop offset="50%" stop-color="#00c6ff" stop-opacity="0.12" />
+      <stop offset="100%" stop-color="#000" stop-opacity="0" />
+    </radialGradient>
+
+    <radialGradient id="purple-glow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#7928ca" stop-opacity="0.32" />
+      <stop offset="60%" stop-color="#a855f7" stop-opacity="0.08" />
+      <stop offset="100%" stop-color="#000" stop-opacity="0" />
+    </radialGradient>
+
+    <radialGradient id="emerald-glow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#10b981" stop-opacity="0.25" />
+      <stop offset="60%" stop-color="#059669" stop-opacity="0.06" />
+      <stop offset="100%" stop-color="#000" stop-opacity="0" />
+    </radialGradient>
+
+    <radialGradient id="center-glow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#38bdf8" stop-opacity="0.28" />
+      <stop offset="50%" stop-color="#6366f1" stop-opacity="0.10" />
+      <stop offset="100%" stop-color="#000" stop-opacity="0" />
+    </radialGradient>
+
+    <!-- Border Linear Gradient -->
+    <linearGradient id="border-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#38bdf8" stop-opacity="0.7" />
+      <stop offset="25%" stop-color="#818cf8" stop-opacity="0.3" />
+      <stop offset="50%" stop-color="#c084fc" stop-opacity="0.6" />
+      <stop offset="75%" stop-color="#38bdf8" stop-opacity="0.3" />
+      <stop offset="100%" stop-color="#06b6d4" stop-opacity="0.8" />
+    </linearGradient>
+
+    <!-- Title Gradient -->
+    <linearGradient id="title-grad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#ffffff" />
+      <stop offset="35%" stop-color="#f0f9ff" />
+      <stop offset="70%" stop-color="#38bdf8" />
+      <stop offset="100%" stop-color="#a78bfa" />
+    </linearGradient>
+
+    <!-- Bar Equalizer Gradient -->
+    <linearGradient id="eq-grad" x1="0%" y1="100%" x2="0%" y2="0%">
+      <stop offset="0%" stop-color="#06b6d4" />
+      <stop offset="40%" stop-color="#3b82f6" />
+      <stop offset="80%" stop-color="#8b5cf6" />
+      <stop offset="100%" stop-color="#ec4899" />
+    </linearGradient>
+
+    <!-- Card Background Gradient -->
+    <linearGradient id="card-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1e293b" stop-opacity="0.65" />
+      <stop offset="100%" stop-color="#0f172a" stop-opacity="0.45" />
+    </linearGradient>
+
+    <linearGradient id="card-border" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#38bdf8" stop-opacity="0.4" />
+      <stop offset="100%" stop-color="#6366f1" stop-opacity="0.15" />
+    </linearGradient>
+
+    <!-- Grid Pattern -->
+    <pattern id="cyber-grid" width="36" height="36" patternUnits="userSpaceOnUse">
+      <path d="M 36 0 L 0 0 0 36" fill="none" stroke="#38bdf8" stroke-width="1" stroke-opacity="0.04" />
+      <circle cx="0" cy="0" r="1" fill="#38bdf8" fill-opacity="0.12" />
+    </pattern>
+
+    <!-- Glow Filter -->
+    <filter id="glow-heavy" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="9" result="blur" />
+      <feMerge>
+        <feMergeNode in="blur" />
+        <feMergeNode in="SourceGraphic" />
+      </feMerge>
+    </filter>
+    <filter id="glow-subtle" x="-10%" y="-10%" width="120%" height="120%">
+      <feGaussianBlur stdDeviation="3.5" result="blur" />
+      <feMerge>
+        <feMergeNode in="blur" />
+        <feMergeNode in="SourceGraphic" />
+      </feMerge>
+    </filter>
+  </defs>
+
+  <style>
+    @keyframes pulseDot {
+      0%, 100% { transform: scale(1); opacity: 1; }
+      50% { transform: scale(1.6); opacity: 0.35; }
+    }
+    @keyframes radarPulse {
+      0% { r: 36px; opacity: 0.9; stroke-width: 2.5px; }
+      70% { opacity: 0.3; }
+      100% { r: 92px; opacity: 0; stroke-width: 0.5px; }
+    }
+    @keyframes radarPulse2 {
+      0% { r: 36px; opacity: 0.8; stroke-width: 2px; }
+      70% { opacity: 0.2; }
+      100% { r: 120px; opacity: 0; stroke-width: 0.5px; }
+    }
+    @keyframes waveDash {
+      0% { stroke-dashoffset: 0; }
+      100% { stroke-dashoffset: -1200; }
+    }
+    @keyframes floatOrb {
+      0%, 100% { transform: translateY(0px) scale(1); }
+      50% { transform: translateY(-12px) scale(1.04); }
+    }
+    @keyframes eq {
+      0%, 100% { transform: scaleY(0.22); }
+      50% { transform: scaleY(1); }
+    }
+    @keyframes borderSweep {
+      0% { stroke-dashoffset: 0; }
+      100% { stroke-dashoffset: 3320; }
+    }
+    @keyframes micFloat {
+      0%, 100% { transform: translateY(0); }
+      50% { transform: translateY(-4px); }
+    }
+
+    .pulse-dot {
+      transform-origin: 18px 16px;
+      animation: pulseDot 1.8s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+    }
+    .radar-1 {
+      transform-origin: 600px 125px;
+      animation: radarPulse 3s cubic-bezier(0, 0.2, 0.8, 1) infinite;
+    }
+    .radar-2 {
+      transform-origin: 600px 125px;
+      animation: radarPulse2 3s cubic-bezier(0, 0.2, 0.8, 1) infinite;
+      animation-delay: 1.4s;
+    }
+    .orb-anim {
+      animation: floatOrb 8s ease-in-out infinite;
+    }
+    .wave-line {
+      stroke-dasharray: 12 12;
+      animation: waveDash 24s linear infinite;
+    }
+    .border-glow {
+      stroke-dasharray: 450 750;
+      animation: borderSweep 14s linear infinite;
+    }
+    .mic-brand {
+      animation: micFloat 4s ease-in-out infinite;
+    }
+
+    .eq-bar {
+      transform-box: fill-box;
+      transform-origin: bottom;
+      animation: eq 1.25s ease-in-out infinite alternate;
+    }
+    .eq-b1 { animation-delay: 0.05s; animation-duration: 0.85s; }
+    .eq-b2 { animation-delay: 0.25s; animation-duration: 1.35s; }
+    .eq-b3 { animation-delay: 0.45s; animation-duration: 1.05s; }
+    .eq-b4 { animation-delay: 0.15s; animation-duration: 1.25s; }
+    .eq-b5 { animation-delay: 0.35s; animation-duration: 0.75s; }
+    .eq-b6 { animation-delay: 0.60s; animation-duration: 1.45s; }
+    .eq-b7 { animation-delay: 0.20s; animation-duration: 0.95s; }
+    .eq-b8 { animation-delay: 0.50s; animation-duration: 1.15s; }
+    .eq-b9 { animation-delay: 0.10s; animation-duration: 0.90s; }
+    .eq-b10 { animation-delay: 0.40s; animation-duration: 1.30s; }
+    .eq-b11 { animation-delay: 0.70s; animation-duration: 1.10s; }
+    .eq-b12 { animation-delay: 0.30s; animation-duration: 1.40s; }
+  </style>
+
+  <!-- Canvas Background -->
+  <rect width="1200" height="460" rx="24" fill="url(#bg-grad)" />
+
+  <!-- Ambient Glow Orbs -->
+  <g class="orb-anim">
+    <ellipse cx="220" cy="110" rx="290" ry="160" fill="url(#purple-glow)" />
+    <ellipse cx="980" cy="150" rx="290" ry="180" fill="url(#cyan-glow)" />
+    <ellipse cx="600" cy="210" rx="360" ry="190" fill="url(#center-glow)" />
+    <ellipse cx="600" cy="390" rx="420" ry="100" fill="url(#emerald-glow)" />
+  </g>
+
+  <!-- Cyber Grid -->
+  <rect width="1200" height="460" rx="24" fill="url(#cyber-grid)" />
+
+  <!-- Outer Border -->
+  <rect x="1" y="1" width="1198" height="458" rx="23" stroke="url(#border-grad)" stroke-width="1.5" fill="none" opacity="0.6" />
+  <rect x="1" y="1" width="1198" height="458" rx="23" stroke="#38bdf8" stroke-width="2.5" fill="none" opacity="0.9" class="border-glow" />
+
+  <!-- Corner Sci-Fi HUD Crosshairs -->
+  <g stroke="#38bdf8" stroke-width="1.5" opacity="0.45">
+    <!-- Top-Left -->
+    <path d="M 24 38 L 24 24 L 38 24" fill="none" />
+    <circle cx="24" cy="24" r="1.5" fill="#38bdf8" />
+    <!-- Top-Right -->
+    <path d="M 1176 38 L 1176 24 L 1162 24" fill="none" />
+    <circle cx="1176" cy="24" r="1.5" fill="#38bdf8" />
+    <!-- Bottom-Left -->
+    <path d="M 24 422 L 24 436 L 38 436" fill="none" />
+    <circle cx="24" cy="436" r="1.5" fill="#38bdf8" />
+    <!-- Bottom-Right -->
+    <path d="M 1176 422 L 1176 436 L 1162 436" fill="none" />
+    <circle cx="1176" cy="436" r="1.5" fill="#38bdf8" />
+  </g>
+
+  <!-- Animated Sinusoidal Audio Spectrum Stream Behind Hero -->
+  <g opacity="0.22" class="wave-line">
+    <path d="M 0 220 Q 150 160 300 220 T 600 220 T 900 220 T 1200 220" fill="none" stroke="#38bdf8" stroke-width="2" />
+    <path d="M 0 230 Q 150 280 300 230 T 600 230 T 900 230 T 1200 230" fill="none" stroke="#818cf8" stroke-width="1.5" />
+  </g>
+
+  <!-- ================= TOP STATUS BAR ================= -->
+  <!-- Left Status Pill -->
+  <g transform="translate(42, 28)">
+    <rect width="248" height="32" rx="16" fill="#0f172a" fill-opacity="0.85" stroke="#1e293b" stroke-width="1" />
+    <circle cx="18" cy="16" r="8" fill="#10b981" fill-opacity="0.2" />
+    <circle cx="18" cy="16" r="4" fill="#10b981" class="pulse-dot" />
+    <text x="36" y="20" fill="#94a3b8" font-family="Segoe UI, -apple-system, system-ui, Roboto, sans-serif" font-size="11" font-weight="600" letter-spacing="0.06em">ENGINE: <tspan fill="#10b981" font-weight="700">ONLINE (GGML V3)</tspan></text>
+  </g>
+
+  <!-- Center Architecture Pill -->
+  <g transform="translate(452, 28)">
+    <rect width="296" height="32" rx="16" fill="#0f172a" fill-opacity="0.85" stroke="#1e293b" stroke-width="1" />
+    <text x="148" y="20" fill="#cbd5e1" font-family="Segoe UI, -apple-system, system-ui, Roboto, sans-serif" font-size="11" font-weight="600" text-anchor="middle" letter-spacing="0.08em">⚡ WHISPER.CPP • IN-MEMORY DAEMON</text>
+  </g>
+
+  <!-- Right Privacy Pill -->
+  <g transform="translate(910, 28)">
+    <rect width="248" height="32" rx="16" fill="#0f172a" fill-opacity="0.85" stroke="#1e293b" stroke-width="1" />
+    <path d="M 22 12 L 28 15 L 28 20 C 28 23.5 22 26 22 26 C 22 26 16 23.5 16 20 L 16 15 Z" fill="none" stroke="#06b6d4" stroke-width="1.5" />
+    <text x="38" y="20" fill="#94a3b8" font-family="Segoe UI, -apple-system, system-ui, Roboto, sans-serif" font-size="11" font-weight="600" letter-spacing="0.06em">PRIVACY: <tspan fill="#38bdf8" font-weight="700">100% AIR-GAPPED</tspan></text>
+  </g>
+
+  <!-- ================= HERO CENTERPIECE ================= -->
+  <!-- Expanding Radar Pulse Rings -->
+  <circle cx="600" cy="122" r="36" fill="none" stroke="#06b6d4" class="radar-1" />
+  <circle cx="600" cy="122" r="36" fill="none" stroke="#818cf8" class="radar-2" />
+
+  <!-- Central Floating Logo Hex/Tile -->
+  <g transform="translate(560, 84)" class="mic-brand" filter="url(#glow-heavy)">
+    <rect width="80" height="80" rx="24" fill="#0f172a" stroke="url(#border-grad)" stroke-width="2.2" />
+    <rect x="3" y="3" width="74" height="74" rx="21" fill="url(#bg-grad)" />
+    
+    <!-- Microphone + Waveform Vector Icon -->
+    <g transform="translate(24, 20)">
+      <!-- Microphone Body -->
+      <rect x="11" y="5" width="10" height="18" rx="5" fill="#ffffff" opacity="0.95" />
+      <path d="M 5 16 C 5 22 10 26 16 26 C 22 26 27 22 27 16" fill="none" stroke="#38bdf8" stroke-width="2.5" stroke-linecap="round" />
+      <line x1="16" y1="26" x2="16" y2="33" stroke="#38bdf8" stroke-width="2.5" stroke-linecap="round" />
+      <line x1="10" y1="33" x2="22" y2="33" stroke="#38bdf8" stroke-width="2.5" stroke-linecap="round" />
+      
+      <!-- Audio waves emitting from mic -->
+      <path d="M 2 12 C 0 14 0 18 2 20" fill="none" stroke="#818cf8" stroke-width="2" stroke-linecap="round" opacity="0.75" />
+      <path d="M 30 12 C 32 14 32 18 30 20" fill="none" stroke="#818cf8" stroke-width="2" stroke-linecap="round" opacity="0.75" />
+    </g>
+  </g>
+
+  <!-- Main Hero Brand Name -->
+  <text x="600" y=\"214\" text-anchor="middle" fill="url(#title-grad)" font-family="Segoe UI, -apple-system, system-ui, Roboto, sans-serif" font-size="48" font-weight="900" letter-spacing="0.06em" filter="url(#glow-subtle)">
+    WHISPERFLOW
+  </text>
+
+  <!-- Subtitle / Value Proposition -->
+  <text x="600" y="244" text-anchor="middle" fill="#94a3b8" font-family="Segoe UI, -apple-system, system-ui, Roboto, sans-serif" font-size="15" font-weight="500" letter-spacing="0.04em">
+    Push-to-Talk AI Voice Typing for Windows <tspan fill="#38bdf8">•</tspan> Sub-Second Latency <tspan fill="#38bdf8">•</tspan> Zero Cloud Leakage
+  </text>
+
+  <!-- ================= LIVE EQUALIZER SPECTRUM ================= -->
+  <!-- 29 Dynamic Equalizer Bars with Staggered Delays -->
+  <g transform="translate(322, 260)">
+    <!-- Center baseline y=52, height up to 50 -->
+    <!-- Left Wing -->
+    <rect class="eq-bar eq-b1" x="0" y="24" width="6" height="28" rx="3" fill="url(#eq-grad)" />
+    <rect class="eq-bar eq-b3" x="16" y="16" width="6" height="36" rx="3" fill="url(#eq-grad)" />
+    <rect class="eq-bar eq-b6" x="32" y="8" width="6" height="44" rx="3" fill="url(#eq-grad)" />
+    <rect class="eq-bar eq-b2" x="48" y="14" width="6" height="38" rx="3" fill="url(#eq-grad)" />
+    <rect class="eq-bar eq-b8" x="64" y="4" width="6" height="48" rx="3" fill="url(#eq-grad)" />
+    <rect class="eq-bar eq-b4" x="80" y="18" width="6" height="34" rx="3" fill="url(#eq-grad)" />
+    <rect class="eq-bar eq-b9" x="96" y="6" width="6" height="46" rx="3" fill="url(#eq-grad)" />
+    <rect class="eq-bar eq-b5" x="112" y="12" width="6" height="40" rx="3" fill="url(#eq-grad)" />
+    <rect class="eq-bar eq-b10" x="128" y="2" width="6" height="50" rx="3" fill="url(#eq-grad)" />
+    <rect class="eq-bar eq-b7" x="144" y="10" width="6" height="42" rx="3" fill="url(#eq-grad)" />
+    <rect class="eq-bar eq-b11" x="160" y="5" width="6" height="47" rx="3" fill="url(#eq-grad)" />
+    <rect class="eq-bar eq-b12" x="176" y="14" width="6" height="38" rx="3" fill="url(#eq-grad)" />
+    <rect class="eq-bar eq-b3" x="192" y="2" width="6" height="50" rx="3" fill="url(#eq-grad)" />
+    <rect class="eq-bar eq-b5" x="208" y="8" width="6" height="44" rx="3" fill="url(#eq-grad)" />
+    <rect class="eq-bar eq-b8" x="224" y="0" width="6" height="52" rx="3" fill="url(#eq-grad)" />
+    <rect class="eq-bar eq-b1" x="240" y="4" width="6" height="48" rx="3" fill="url(#eq-grad)" />
+    <rect class="eq-bar eq-b6" x="256" y="0" width="8" height="52" rx="4" fill="#ffffff" />
+    <rect class="eq-bar eq-b7" x="272" y="2" width="8" height="50" rx="4" fill="#38bdf8" />
+    <rect class="eq-bar eq-b2" x="288" y="0" width="8" height="52" rx="4" fill="#ffffff" />
+    <rect class="eq-bar eq-b10" x="304" y="4" width="6" height="48" rx="3" fill="url(#eq-grad)" />
+    <rect class="eq-bar eq-b4" x="320" y="0" width="6" height="52" rx="3" fill="url(#eq-grad)" />
+    <rect class="eq-bar eq-b9" x="336" y="8" width="6" height="44" rx="3" fill="url(#eq-grad)" />
+    <rect class="eq-bar eq-b12" x="352" y="2" width="6" height="50" rx="3" fill="url(#eq-grad)" />
+    <rect class="eq-bar eq-b3" x="368" y="14" width="6" height="38" rx="3" fill="url(#eq-grad)" />
+    <rect class="eq-bar eq-b8" x="384" y="5" width="6" height="47" rx="3" fill="url(#eq-grad)" />
+    <rect class="eq-bar eq-b2" x="400" y="10" width="6" height="42" rx="3" fill="url(#eq-grad)" />
+    <rect class="eq-bar eq-b11" x="416" y="2" width="6" height="50" rx="3" fill="url(#eq-grad)" />
+    <rect class="eq-bar eq-b5" x="432" y="12" width="6" height="40" rx="3" fill="url(#eq-grad)" />
+    <rect class="eq-bar eq-b9" x="448" y="6" width="6" height="46" rx="3" fill="url(#eq-grad)" />
+    <rect class="eq-bar eq-b1" x="464" y="18" width="6" height="34" rx="3" fill="url(#eq-grad)" />
+    <rect class="eq-bar eq-b11" x="480" y="4" width="6" height="48" rx="3" fill="url(#eq-grad)" />
+    <rect class="eq-bar eq-b3" x="496" y="14" width="6" height="38" rx="3" fill="url(#eq-grad)" />
+    <rect class="eq-bar eq-b7" x="512" y="8" width="6" height="44" rx="3" fill="url(#eq-grad)" />
+    <rect class="eq-bar eq-b4" x="528" y="16" width="6" height="36" rx="3" fill="url(#eq-grad)" />
+    <rect class="eq-bar eq-b2" x="544" y="24" width="6" height="28" rx="3" fill="url(#eq-grad)" />
+  </g>
+
+  <!-- ================= BOTTOM FEATURE PILL CARDS ================= -->
+  <!-- Card 1: Sub-Second Speed -->
+  <g transform="translate(48, 345)">
+    <rect width="260" height="72" rx="16" fill="url(#card-grad)" stroke="url(#card-border)" stroke-width="1" />
+    <circle cx="38" cy="36" r="20" fill="#0284c7" fill-opacity="0.18" />
+    <!-- Lightning Bolt -->
+    <path d="M 38 24 L 30 37 L 37 37 L 35 48 L 46 34 L 39 34 Z" fill="#38bdf8" />
+    <text x="68" y="32" fill="#f8fafc" font-family="Segoe UI, -apple-system, system-ui, Roboto, sans-serif" font-size="14" font-weight="700">&lt; 0.8s Sub-Second</text>
+    <text x="68" y="50" fill="#94a3b8" font-family="Segoe UI, -apple-system, system-ui, Roboto, sans-serif" font-size="11" font-weight="500">In-Memory whisper.cpp Engine</text>
+  </g>
+
+  <!-- Card 2: 100% Air-Gapped -->
+  <g transform="translate(328, 345)">
+    <rect width="260" height="72" rx="16" fill="url(#card-grad)" stroke="url(#card-border)" stroke-width="1" />
+    <circle cx="38" cy="36" r="20" fill="#10b981" fill-opacity="0.18" />
+    <!-- Shield -->
+    <path d="M 38 24 L 47 28 L 47 36 C 47 41.5 38 46 38 46 C 38 46 29 41.5 29 36 L 29 28 Z" fill="none" stroke="#10b981" stroke-width="2.2" />
+    <path d="M 34 35 L 37 38 L 42 32" fill="none" stroke="#10b981" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+    <text x="68" y="32" fill="#f8fafc" font-family="Segoe UI, -apple-system, system-ui, Roboto, sans-serif" font-size="14" font-weight="700">100% Air-Gapped</text>
+    <text x="68" y="50" fill="#94a3b8" font-family="Segoe UI, -apple-system, system-ui, Roboto, sans-serif" font-size="11" font-weight="500">Zero Cloud, RAM-only Audio</text>
+  </g>
+
+  <!-- Card 3: Smart Retraction -->
+  <g transform="translate(608, 345)">
+    <rect width="260" height="72" rx="16" fill="url(#card-grad)" stroke="url(#card-border)" stroke-width="1" />
+    <circle cx="38" cy="36" r="20" fill="#8b5cf6" fill-opacity="0.18" />
+    <!-- Brain / Pulse Node -->
+    <path d="M 33 30 C 31 30 29 32 29 34 C 29 36 30.5 37.5 32 38 C 30.5 39 30 40.5 30 42 C 30 44 32 46 35 46 C 36 46 37 45.5 37.5 45 C 38 45.5 39 46 40 46 C 43 46 45 44 45 42 C 45 40.5 44.5 39 43 38 C 44.5 37.5 46 36 46 34 C 46 32 44 30 42 30 C 41 30 40 30.5 39.5 31 C 39 30.5 38 30 37 30 Z" fill="none" stroke="#a78bfa" stroke-width="1.8" />
+    <text x="68" y="32" fill="#f8fafc" font-family="Segoe UI, -apple-system, system-ui, Roboto, sans-serif" font-size="14" font-weight="700">Smart Retraction</text>
+    <text x="68" y="50" fill="#94a3b8" font-family="Segoe UI, -apple-system, system-ui, Roboto, sans-serif" font-size="11" font-weight="500">Speech Correction &amp; Multipliers</text>
+  </g>
+
+  <!-- Card 4: 60 FPS Win32 HUD -->
+  <g transform="translate(888, 345)">
+    <rect width="264" height="72" rx="16" fill="url(#card-grad)" stroke="url(#card-border)" stroke-width="1" />
+    <circle cx="38" cy="36" r="20" fill="#ec4899" fill-opacity="0.18" />
+    <!-- Display / Dock Pill -->
+    <rect x="27" y="28" width="22" height="16" rx="3" fill="none" stroke="#f472b6" stroke-width="1.8" />
+    <line x1="34" y1="44" x2="42" y2="44" stroke="#f472b6" stroke-width="2" stroke-linecap="round" />
+    <circle cx="38" cy="36" r="2.5" fill="#f472b6" />
+    <text x="68" y="32" fill="#f8fafc" font-family="Segoe UI, -apple-system, system-ui, Roboto, sans-serif" font-size="14" font-weight="700">60 FPS Win32 HUD</text>
+    <text x="68" y="50" fill="#94a3b8" font-family="Segoe UI, -apple-system, system-ui, Roboto, sans-serif" font-size="11" font-weight="500">Layered Obsidian Dock Pill</text>
+  </g>
+
+</svg>

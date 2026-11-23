@@ -1,0 +1,17 @@
+{
+  "cleanup_level": "medium",
+  "model": "small",
+  "hud_visible": true,
+  "hotkey": "ctrl+alt",
+  "dock_y": 1146,
+  "custom_vocabulary": [
+    "Antigravity",
+    "Wispr Flow",
+    "PowerShell",
+    "FastAPI"
+  ],
+  "word_replacements": {
+    "lap": "laptop"
+  },
+  "comment": "Push-to-Talk: Hold [Ctrl + Alt]. 60 FPS Native Layered HUD. In-memory whisper-server with large-v3-turbo."
+}
