@@ -62,6 +62,12 @@
       <p>Spotted a misheard word? Press <b><code>Alt + Z</code></b> to open the QuickFix vault. WhisperFlow captures the acoustic correction, updates <code>learned_corrections.json</code>, and automatically eliminates future misrecognitions.</p>
     </td>
   </tr>
+  <tr>
+    <td colspan="2" valign="top">
+      <h4>🎮 WhisperFlow Studio (Standalone Control Center & ML Dashboard)</h4>
+      <p>Brand new dedicated desktop control application featuring the prominent WhisperFlow logo, 1-click <b>Start / Stop engine</b> process lifecycle, live microphone VU volume meter, interactive dictation scratchpad, and complete visual management of your acoustic self-learning rules vault.</p>
+    </td>
+  </tr>
 </table>
 
 ---
