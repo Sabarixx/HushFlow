@@ -136,6 +136,9 @@ def test_clipboard_preservation():
 
 def test_live_server_inference():
     print("[TEST 5/6] Testing Live whisper-server HTTP POST on port 8080...")
+    from whisper_flow import ensure_whisper_server
+    ensure_whisper_server()
+
     sample_wav = r"C:\Users\sabarixx\whisper.cpp\samples\jfk.wav"
     if not os.path.exists(sample_wav):
         print("  [SKIP] Sample audio not found.")
@@ -168,10 +171,10 @@ def test_whisper_flow_studio():
 
     # Verify initial state
     assert app.tabview is not None
-    assert app.hero_status_title is not None
-    assert app.btn_master_toggle is not None
-    assert app.vu_bar is not None
-    print("  UI Components : Header, Hero card, VU meter, Tabview verified.")
+    assert app.service_title is not None
+    assert app.btn_service_toggle is not None
+    assert app.meter_frame is not None
+    print("  UI Components : Header, Service card, Discrete VU meter, Tabview verified.")
 
     # Test Vault Add & Delete rule
     test_key = "__test_acoustic_key__"
