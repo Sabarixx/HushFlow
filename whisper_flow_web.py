@@ -651,6 +651,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
     let isRunning = false;
     let allRules = {};
+    let isPolling = false;
 
     function switchTab(tabId) {
       document.querySelectorAll('.tab-pane').forEach(el => el.classList.add('hidden'));
@@ -673,6 +674,8 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     }
 
     async function pollStatus() {
+      if (isPolling) return;
+      isPolling = true;
       try {
         const res = await fetch('/api/status');
         const data = await res.json();
@@ -725,6 +728,8 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
       } catch (e) {
         console.error(e);
+      } finally {
+        isPolling = false;
       }
     }
 
@@ -848,7 +853,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       await fetch('/api/quickfix', { method: 'POST' });
     }
 
-    setInterval(pollStatus, 400);
+    setInterval(pollStatus, 1500);
     pollStatus();
   </script>
 </body>
@@ -859,9 +864,24 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 def index():
     return HTML_TEMPLATE
 
+from socketserver import ThreadingMixIn
+from wsgiref.simple_server import WSGIServer, make_server
+
+class ThreadingWSGIServer(ThreadingMixIn, WSGIServer):
+    daemon_threads = True
+    request_queue_size = 128
+    allow_reuse_address = True
+
+class ThreadingAdapter(bottle.ServerAdapter):
+    def run(self, handler):
+        httpd = make_server(self.host, self.port, handler, server_class=ThreadingWSGIServer)
+        httpd.serve_forever()
+
 def start_server():
-    print("[OK] WhisperFlow Web Studio starting on http://127.0.0.1:8765")
-    bottle.run(app, host='127.0.0.1', port=8765, quiet=True)
+    port = 5050
+    print(f"[OK] WhisperFlow Web Studio starting on http://127.0.0.1:{port} (Multi-threaded)")
+    server = ThreadingAdapter(host='127.0.0.1', port=port)
+    bottle.run(app, server=server, quiet=True)
 
 if __name__ == "__main__":
     start_server()
