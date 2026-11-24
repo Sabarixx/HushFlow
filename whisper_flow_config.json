@@ -1,8 +1,9 @@
 {
   "cleanup_level": "medium",
-  "model": "small",
+  "model": "small.en-q5_1",
   "hud_visible": true,
   "hotkey": "ctrl+alt",
+  "toggle_hotkey": "ctrl+alt+space",
   "dock_y": 360,
   "custom_vocabulary": [
     "Antigravity",
@@ -10,8 +11,6 @@
     "PowerShell",
     "FastAPI"
   ],
-  "word_replacements": {
-    "lap": "laptop"
-  },
-  "comment": "Push-to-Talk: Hold [Ctrl + Alt]. 60 FPS Native Layered HUD. In-memory whisper-server with large-v3-turbo."
+  "word_replacements": {},
+  "comment": "Push-to-Talk: Hold [Ctrl + Alt]. Hands-Free: Tap [Ctrl + Alt + Space]. 60 FPS Native Layered HUD."
 }

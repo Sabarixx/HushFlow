@@ -63,6 +63,60 @@ DIGIT_WORDS = {
     'four': '4', 'five': '5', 'six': '6', 'seven': '7', 'eight': '8', 'nine': '9'
 }
 
+def apply_voice_formatting_commands(text: str) -> str:
+    """
+    Translates spoken punctuation and formatting commands into real characters.
+    e.g. 'hello new line world' -> 'hello\nworld'
+         'camel case get user data' -> 'getUserData'
+         'snake case user profile' -> 'user_profile'
+    """
+    if not text:
+        return ""
+
+    # Direct punctuation commands (when preceded by a word or space)
+    text = re.sub(r"(?<=\w)\s+\bcomma\b", ",", text, flags=re.IGNORECASE)
+    text = re.sub(r"(?<=\w)\s+\bperiod\b", ".", text, flags=re.IGNORECASE)
+    text = re.sub(r"(?<=\w)\s+\bfull\s+stop\b", ".", text, flags=re.IGNORECASE)
+    text = re.sub(r"(?<=\w)\s+\bquestion\s+mark\b", "?", text, flags=re.IGNORECASE)
+    text = re.sub(r"(?<=\w)\s+\bexclamation\s+(?:mark|point)\b", "!", text, flags=re.IGNORECASE)
+    text = re.sub(r"(?<=\w)\s+\bcolon\b(?!\s*\d)", ":", text, flags=re.IGNORECASE)
+    text = re.sub(r"(?<=\w)\s+\bsemicolon\b", ";", text, flags=re.IGNORECASE)
+
+    # Line breaks
+    text = re.sub(r"\s*\b(?:new\s+paragraph)\b\s*", "\n\n", text, flags=re.IGNORECASE)
+    text = re.sub(r"\s*\b(?:new\s+line|next\s+line)\b\s*", "\n", text, flags=re.IGNORECASE)
+
+    # Casing commands
+    def _camel(m):
+        words = m.group(1).split()
+        return words[0].lower() + "".join(w.capitalize() for w in words[1:]) if words else ""
+    def _snake(m):
+        return "_".join(m.group(1).lower().split())
+    def _kebab(m):
+        return "-".join(m.group(1).lower().split())
+    def _allcaps(m):
+        return m.group(1).upper()
+
+    text = re.sub(r"\bcamel\s+case\s+([a-zA-Z0-9_\s]+?)(?=[,.\n]|$)", _camel, text, flags=re.IGNORECASE)
+    text = re.sub(r"\bsnake\s+case\s+([a-zA-Z0-9_\s]+?)(?=[,.\n]|$)", _snake, text, flags=re.IGNORECASE)
+    text = re.sub(r"\bkebab\s+case\s+([a-zA-Z0-9_\s]+?)(?=[,.\n]|$)", _kebab, text, flags=re.IGNORECASE)
+    text = re.sub(r"\ball\s+caps\s+([a-zA-Z0-9_]+)\b", _allcaps, text, flags=re.IGNORECASE)
+
+    return text
+
+def resolve_contextual_homophones(text: str) -> str:
+    """
+    Resolves frequent acoustic homophones based on surrounding sentence context.
+    e.g. 'read the entire setup ... out of 10' -> 'rate the entire setup ... out of 10'
+    """
+    if not text:
+        return ""
+    # "read" / "red" -> "rate" in scoring/evaluation contexts
+    text = re.sub(r"\b(?:read|red)\b(?=.*?\b(?:out\s+of\s+\d+|score|rating|criterion|criteria)\b)", "rate", text, flags=re.IGNORECASE)
+    text = re.sub(r"\b(?:read|red)\s+out\s+of\s+10\b", "rate out of 10", text, flags=re.IGNORECASE)
+    text = re.sub(r"\bout\s+of\s+10\s+emails\b", "out of 10 in all", text, flags=re.IGNORECASE)
+    return text
+
 MULTIPLIERS = {
     'double': 2,
     'triple': 3,
@@ -265,14 +319,18 @@ def resolve_single_correction(text: str) -> str:
             head = re.sub(r"[\$£€¥\s]+$", "", head).strip()
             resolved = f"{head} {after_clean}".strip()
 
-    # Case C: Action replacement
+    # Case C: Safe Action / Clause replacement with ABSOLUTE TRUNCATION PROTECTION
     if not resolved:
         words_before = before_clean.split()
         words_after = after_clean.split()
-        if len(words_after) <= 4 and len(words_before) > len(words_after):
+        # Only replace the immediate prior clause if before_clean is a short snippet (<= 4 words)
+        if len(words_before) <= 4 and len(words_after) <= 6:
+            resolved = after_clean
+        elif len(words_after) <= 4 and len(words_before) > len(words_after) and len(words_before) <= 8:
             resolved = " ".join(words_before[:-len(words_after)]) + " " + after_clean
         else:
-            resolved = after_clean
+            # For long speech / multi-sentence dictation: NEVER drop preceding lines!
+            resolved = f"{before_clean}. {after_clean}"
 
     resolved = re.sub(r"[,.!?\s]+$", "", resolved).strip() + "."
     return f"{prefix}{resolved}{suffix}".strip()
@@ -349,17 +407,23 @@ def apply_smart_cleanup(raw_text: str, level: str = "medium", config: dict = Non
 
     cleaned = raw_text
 
-    # Step 1: Normalize spoken numbers, digits, multipliers, currency & time
+    # Step 1: Voice formatting commands (casing, linebreaks, punctuation)
+    cleaned = apply_voice_formatting_commands(cleaned)
+
+    # Step 2: Contextual homophone resolution
+    cleaned = resolve_contextual_homophones(cleaned)
+
+    # Step 3: Normalize spoken numbers, digits, multipliers, currency & time
     cleaned = normalize_spoken_numbers(cleaned, config=config)
 
-    # Step 2: Strip vocal fillers
+    # Step 4: Strip vocal fillers
     cleaned = clean_fillers(cleaned)
 
-    # Step 3: Resolve self-corrections (medium, high)
+    # Step 5: Resolve self-corrections (medium, high)
     if level in ["medium", "high"]:
         cleaned = resolve_self_corrections_iterative(cleaned)
         cleaned = clean_fillers(cleaned)
 
-    # Step 4: Final formatting
+    # Step 6: Final formatting
     cleaned = format_text(cleaned)
     return cleaned

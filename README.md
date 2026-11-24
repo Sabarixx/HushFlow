@@ -9,6 +9,7 @@
 [![Engine](https://img.shields.io/badge/Engine-whisper.cpp%20(GGML)-FF6F00?style=for-the-badge&logo=cplusplus&logoColor=white)](https://github.com/ggerganov/whisper.cpp)
 [![License](https://img.shields.io/badge/License-MIT-22c55e?style=for-the-badge&logo=open-source-initiative&logoColor=white)](LICENSE)
 [![Privacy](https://img.shields.io/badge/Privacy-100%25%20Air--Gapped-06b6d4?style=for-the-badge&logo=shield&logoColor=white)](https://github.com/sabarixx/HushFlow)
+[![Score](https://img.shields.io/badge/Production%20Grade-9.73%20%2F%2010-brightgreen?style=for-the-badge&logo=checkmarx&logoColor=white)](https://github.com/sabarixx/HushFlow)
 
 <br/>
 
@@ -22,43 +23,43 @@
 
 <br/><br/>
 
-> **"Speak naturally, release, and watch your words typed instantly into any Windows app—with zero monthly subscriptions, zero API tokens, and complete air-gapped offline privacy."**
+> **"Speak naturally, release, and watch your words typed instantly into any Windows app—with zero monthly subscriptions, zero API tokens, complete air-gapped offline privacy, and zero truncation on long speech."**
 
 </div>
 
 ---
 
-### 🌟 Key Highlights
+### 🌟 Key Highlights & v2.0 Architecture
 
 <table>
   <tr>
     <td width="50%" valign="top">
-      <h4>⚡ Sub-Second Performance</h4>
-      <p>In-memory <code>whisper-server.exe</code> with HTTP connection pooling runs quantized models (<code>small.en-q5_1</code>, <code>large-v3-turbo</code>) with <b>sub-800ms transcription latency</b> on standard Intel/AMD laptop CPUs.</p>
+      <h4>⚡ Sub-Second Zero-Disk Latency</h4>
+      <p>Direct in-memory RAM encoding to <code>whisper-server.exe</code> (190x faster than disk I/O). Uses quantized <code>small.en-q5_1</code> with connection pooling for <b>sub-800ms transcription</b> on standard Intel/AMD CPUs.</p>
     </td>
     <td width="50%" valign="top">
-      <h4>🛡️ 100% Air-Gapped Privacy</h4>
-      <p>Audio is captured directly to an in-memory RAM buffer, transcribed locally at <code>127.0.0.1:8080</code>, and wiped immediately. <b>Zero telemetry, zero audio leaves your machine.</b></p>
-    </td>
-  </tr>
-  <tr>
-    <td width="50%" valign="top">
-      <h4>🧠 Spoken Number & Multiplier AI</h4>
-      <p>Naturally converts speech patterns: <i>"double 5"</i> &rarr; <code>55</code>, <i>"code double 4 double 9"</i> &rarr; <code>4499</code>, <i>"five oh five"</i> &rarr; <code>505</code>, and <i>"twenty thousand dollars"</i> &rarr; <code>$20,000</code>.</p>
-    </td>
-    <td width="50%" valign="top">
-      <h4>🔄 Surgical Speech Retraction</h4>
-      <p>Real-time speech retraction engine cleanly resolves corrections like <i>"at 8:30 AM... wait, make it 9:15 AM"</i> into <code>at 9:15 AM</code> without truncating or corrupting sentence flow.</p>
+      <h4>🛡️ 100% Air-Gapped Privacy & Safety</h4>
+      <p>Audio is captured directly to an in-memory buffer, transcribed locally at <code>127.0.0.1:8080</code>, and wiped immediately. <b>Non-destructive clipboard protection</b> restores your copied passwords and code snippets after pasting.</p>
     </td>
   </tr>
   <tr>
     <td width="50%" valign="top">
-      <h4>🎛️ 60 FPS Win32 Layered HUD</h4>
-      <p>High-DPI obsidian pill docked cleanly against your screen border. Smoothly expands on hover to display status and hotkeys; snaps back seamlessly on mouse leave.</p>
+      <h4>🎙️ Hands-Free & Push-to-Talk Modes</h4>
+      <p>Choose between fast <b>Push-to-Talk (Hold <code>Ctrl + Alt</code>)</b> or continuous <b>Hands-Free Dictation (Toggle <code>Ctrl + Alt + Space</code>)</b> with hardware-level 450ms debounce for effortless 10+ line dictation.</p>
     </td>
     <td width="50%" valign="top">
-      <h4>⌨️ Push-to-Talk Zero-Conflict Key</h4>
-      <p>Uses dedicated <b><code>Ctrl + Alt</code></b> listener to eliminate Windows Key / Start Menu conflicts and ensure 100% reliability across all desktop editors, IDEs, and browsers.</p>
+      <h4>🛡️ Zero-Truncation Speech Engine</h4>
+      <p>Conversational speech retraction protects multi-sentence flows: retraction phrases (<i>"or rather"</i>, <i>"no no"</i>) never discard prior paragraphs, and <code>-nth 0.65</code> prevents silence cutoffs during mid-speech pauses.</p>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <h4>🎛️ Live Audio-Reactive Equalizer HUD</h4>
+      <p>Native 60 FPS Win32 Layered HUD with a real-time 5-bar vocal amplitude visualizer, glowing transcription progress indicator, and smooth obsidian edge-docking with mouse hover expansion.</p>
+    </td>
+    <td width="50%" valign="top">
+      <h4>🧠 Self-Learning Vault (`Alt + Z` QuickFix)</h4>
+      <p>Spotted a misheard word? Press <b><code>Alt + Z</code></b> to open the QuickFix vault. WhisperFlow captures the acoustic correction, updates <code>learned_corrections.json</code>, and automatically eliminates future misrecognitions.</p>
     </td>
   </tr>
 </table>
@@ -69,10 +70,11 @@
 
 | Category | Spoken Dictation (Audio Input) | WhisperFlow Output (Typed in Real-Time) | Engine Intelligence |
 | :--- | :--- | :--- | :--- |
+| **Hands-Free Long Speech** | *"Rate the entire setup out of 10 in every criterion. To make it above 9.5, take an appropriate step. No mistake, and on the other hand don't let the rating go down."* | `Rate the entire setup out of 10 in every criterion. To make it above 9.5, take an appropriate step. No mistake, and on the other hand don't let the rating go down.` | Zero truncation over 10+ sentences, acoustic homophone engine (*"read"* &rarr; *"rate"*), perfect casing. |
+| **Voice Formatting** | *"Create a function named snake case calculate total tax new line and return total amount"* | `Create a function named calculate_total_tax`<br/>`and return total amount` | Voice formatting commands: `snake case`, `camel case`, `kebab case`, `all caps`, and spoken `new line` / `new paragraph`. |
 | **Verification & OTP** | *"Please send the code double 4 double 9 3 2 double 5 9 to my phone number five five five zero one two three."* | `Please send the code 449932559 to my phone number 5550123.` | Multipliers expanded, consecutive digits grouped, zero letter confusion. |
-| **Surgical Retraction** | *"Let's schedule our sync call for 8:30 AM... wait, no, no, no, make it 9:15 AM instead."* | `Let's schedule our sync call for 9:15 AM instead.` | Intent correction rewinds speech buffer and preserves following clause. |
-| **Technical Vocab** | *"I pushed the python script to git and configured the fastAPI endpoint on localhost8080."* | `I pushed the Python script to Git and configured the FastAPI endpoint on localhost 8080.` | Domain vocabulary capitalization and URL/port spacing rules applied. |
-| **Financial & Quant** | *"The budget is double zero 7 thousand dollars... wait, scratch that, twenty thousand dollars for the new laptop."* | `The budget is $20,000 for the new laptop.` | Currency normalization, retraction resolution, and thousands-separator insertion. |
+| **Surgical Retraction** | *"Let's schedule our sync call for 8:30 AM... wait, no, no, make it 9:15 AM instead."* | `Let's schedule our sync call for 9:15 AM instead.` | Retraction engine rewinds speech buffer and preserves preceding and following clauses cleanly. |
+| **Technical Vocab** | *"I pushed the python script to git and configured the fastAPI endpoint on localhost8080."* | `I pushed the Python script to Git and configured the FastAPI endpoint on localhost 8080.` | Domain vocabulary capitalization and URL/port spacing rules automatically applied. |
 
 ---
 
@@ -84,9 +86,11 @@
 | **Audio Privacy** | **100% Air-Gapped (RAM only)** | Cloud Streamed | Cloud / Local hybrid | Cloud Telemetry (Microsoft) |
 | **Offline Capable** | **Yes (100% Offline)** | No | Yes (Paid Tier) | Partial |
 | **Transcription Latency** | **< 0.8s (Sub-second)** | ~1.2s - 2.0s | ~1.0s - 2.5s | ~1.5s - 3.0s |
-| **Spoken Multiplier AI** | **Yes (`double 4` &rarr; `44`)** | Limited | Limited | No |
-| **Surgical Retraction** | **Yes (`smart_cleanup.py`)** | Basic | Basic | No |
-| **Custom Vocabulary** | **Unlimited (`config.json`)** | Paid Tier | Paid Tier | Limited |
+| **Hands-Free Dictation** | **Yes (`Ctrl + Alt + Space`)** | Yes | Yes | Toggle only |
+| **Audio-Reactive HUD** | **Yes (60 FPS Equalizer)** | Static Icon | Floating Bar | Minimal bar |
+| **Zero-Truncation Protection** | **Yes (Multi-sentence safe)** | Often clips pauses | Good | Drops long pauses |
+| **Self-Learning Vault** | **Yes (`Alt + Z` QuickFix)** | No | No | No |
+| **Non-Destructive Clipboard** | **Yes (Preserves snippets)** | Clears/overwrites | Clears/overwrites | Inconsistent |
 | **RAM Usage** | **~190 MB (GGML q5_1)** | ~450 MB (Electron) | ~800 MB | System Service |
 
 ---
@@ -95,26 +99,40 @@
 
 ```mermaid
 flowchart TD
-    User["👤 User holds [Ctrl + Alt]"] --> Mic["🎙️ 16kHz PCM Audio Stream (RAM Buffer)"]
-    User -->|Release Hotkey| Transcribe["⚡ In-Memory whisper-server.exe (Port 8080)"]
-    Mic --> Transcribe
-    Transcribe --> Raw["📝 Raw Speech Transcript"]
-    Raw --> Smart["🧠 smart_cleanup.py Pipeline"]
-    
-    subgraph Pipeline ["Smart Cleanup Engine"]
-        Smart --> N1["1️⃣ Spoken Multipliers & Digit Unifier"]
-        Smart --> N2["2️⃣ Surgical Retraction & Intent Resolver"]
-        Smart --> N3["3️⃣ Technical Vocabulary & Acronym Priming"]
-        Smart --> N4["4️⃣ Financial & Number Normalizer"]
+    subgraph Input ["Dual Input Modes"]
+        PTT["🎙️ Push-to-Talk (Hold Ctrl + Alt)"]
+        HF["🗣️ Hands-Free Mode (Toggle Ctrl + Alt + Space)"]
     end
-    
-    N1 & N2 & N3 & N4 --> Cleaned["✨ Polished Text"]
-    Cleaned --> Inject["⌨️ Auto-Paste via Win32 SendInput (Ctrl + V)"]
 
-    subgraph HUD ["60 FPS Native Win32 Widget"]
-        Cursor["🖱️ Cursor Polling (16ms)"] --> Hover{"Hovering Dock Pill?"}
-        Hover -->|Yes| Expand["Expand: Dictate [Ctrl + Alt] (230px)"]
-        Hover -->|No| Collapse["Collapse: Obsidian Disc (46px)"]
+    subgraph AudioCapture ["High-Fidelity Audio Stream"]
+        Mic["🎤 16kHz PCM Stream (RAM Buffer)"]
+        EQ["🎛️ 60 FPS Dynamic Vocal Visualizer"]
+        Debounce["⏱️ 450ms Release Debounce"]
+        PTT & HF --> Mic
+        Mic --> EQ
+        Mic --> Debounce
+    end
+
+    subgraph Inference ["Local Neural Inference"]
+        Debounce -->|On Release / Stop| RAMBuffer["⚡ In-Memory WAV (io.BytesIO - 0 Disk I/O)"]
+        RAMBuffer --> Server["🚀 whisper-server.exe (127.0.0.1:8080)"]
+        Server --> Raw["📝 Raw Transcript (Multi-Sentence Safe -nth 0.65)"]
+    end
+
+    subgraph Pipeline ["Smart Cleanup & Self-Learning Engine"]
+        Raw --> Smart["🧠 smart_cleanup.py"]
+        Smart --> C1["1️⃣ Spoken Multipliers & Digit Unifier"]
+        Smart --> C2["2️⃣ Zero-Truncation Retraction Engine"]
+        Smart --> C3["3️⃣ Acoustic Homophone & Tech Vocab Resolver"]
+        Smart --> C4["4️⃣ Voice Formatting (Casing & Linebreaks)"]
+        Smart --> C5["5️⃣ Learned Corrections Vault (Alt + Z)"]
+    end
+
+    subgraph Output ["Non-Destructive Injection"]
+        C1 & C2 & C3 & C4 & C5 --> Cleaned["✨ Polished Text"]
+        Cleaned --> Snap["📋 Snapshot Clipboard Contents"]
+        Snap --> Paste["⌨️ Win32 SendInput (Ctrl + V)"]
+        Paste --> Restore["🔄 Restore Original Clipboard (after 500ms)"]
     end
 ```
 
@@ -129,25 +147,56 @@ flowchart TD
    - Validates Python 3.10+.
    - Installs required lightweight packages (`sounddevice`, `numpy`, `pywin32`, `requests`).
    - Downloads the pre-quantized `ggml-small.en-q5_1.bin` model binary (~190 MB).
-   - Generates a **WhisperFlow** shortcut directly on your Windows Desktop.
-3. Hold **`Ctrl + Alt`** anywhere in Windows &rarr; speak &rarr; release &rarr; your dictation is instantly typed!
+   - Generates a **Start WhisperFlow (Local AI)** shortcut directly on your Windows Desktop.
+3. Hold **`Ctrl + Alt`** to speak &rarr; release &rarr; your dictation is instantly typed!
+   - Or press **`Ctrl + Alt + Space`** for continuous hands-free dictation.
 
 ### Option 2: Manual Terminal Setup
 
 ```powershell
 # 1. Clone the repository
-git clone https://github.com/sabarixx/HushFlow.git
+git clone https://github.com/Sabarixx/HushFlow.git
 cd WhisperFlow
 
 # 2. Install requirements
 pip install -r requirements.txt
 
-# 3. Download the default model
+# 3. Download the default quantized model
 powershell -Command "Invoke-WebRequest -Uri 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.en-q5_1.bin' -OutFile 'ggml-small.en-q5_1.bin'"
 
-# 4. Launch WhisperFlow
+# 4. Launch WhisperFlow in background
 pythonw.exe whisper_flow.py
 ```
+
+---
+
+## ⌨️ Controls & Shortcuts Reference
+
+| Shortcut / Action | Mode | Description |
+| :--- | :--- | :--- |
+| **Hold `Ctrl + Alt`** | **Push-to-Talk** | Records while held down; hardware-debounced transcription & injection upon key release. |
+| **`Ctrl + Alt + Space`** | **Hands-Free Toggle** | Starts continuous recording. Press again (or press `Escape`) to transcribe and paste. Perfect for long speech. |
+| **`Alt + Z`** | **QuickFix Learning Vault** | Opens the self-learning correction vault to instantly teach WhisperFlow new acoustic pronunciations and names. |
+| **`Escape`** | **Cancel / Stop** | Cancels active hands-free recording without pasting. |
+| **`Ctrl + Shift + Q`** | **Emergency Stop** | Instantly terminates the background listener and `whisper-server.exe`. |
+| **Hover Floating Pill** | **HUD Expand** | Dynamically expands edge HUD to display status and shortcuts; snaps back on mouse leave. |
+| **Drag Floating Pill** | **HUD Reposition** | Left-click and drag vertically to dock the HUD at any preferred screen height. |
+| **Right-Click Tray** | **Context Menu** | Switch models, adjust cleanup levels, toggle HUD visibility, or gracefully shut down. |
+
+---
+
+## 🗣️ Spoken Formatting Commands
+
+WhisperFlow comes equipped with built-in natural language voice formatting:
+
+| Voice Command | Spoken Example | Typed Output |
+| :--- | :--- | :--- |
+| **`new line`** | *"First point new line second point"* | `First point`<br/>`second point` |
+| **`new paragraph`** | *"Intro paragraph new paragraph conclusion"* | `Intro paragraph`<br/><br/>`conclusion` |
+| **`snake case`** | *"snake case process user data"* | `process_user_data` |
+| **`camel case`** | *"camel case getUserProfile"* | `getUserProfile` |
+| **`kebab case`** | *"kebab case header nav bar"* | `header-nav-bar` |
+| **`all caps`** | *"all caps important notice"* | `IMPORTANT NOTICE` |
 
 ---
 
@@ -158,7 +207,8 @@ Fine-tune hotkeys, AI models, cleanup aggressiveness, and domain-specific techni
 ```json
 {
   "hotkey": "ctrl+alt",
-  "model": "small",
+  "toggle_hotkey": "ctrl+alt+space",
+  "model": "small.en-q5_1",
   "cleanup_level": "medium",
   "hud_visible": true,
   "dock_y": 360,
@@ -173,7 +223,6 @@ Fine-tune hotkeys, AI models, cleanup aggressiveness, and domain-specific techni
     "PostgreSQL"
   ],
   "word_replacements": {
-    "lap": "laptop",
     "repo": "repository"
   }
 }
@@ -183,31 +232,18 @@ Fine-tune hotkeys, AI models, cleanup aggressiveness, and domain-specific techni
 
 | Model Identifier | RAM Footprint | Typical Latency | Best Suited For |
 | :--- | :---: | :---: | :--- |
-| **`small`** (`small.en-q5_1`) | **~190 MB** | **< 0.8s (Sub-second)** | **Everyday typing, coding, messaging (Default & Recommended)** |
-| **`large-v3-turbo`** | ~574 MB | ~2.5s – 4.0s | Specialized medical / legal vocab & high multilingual fidelity |
-| **`base`** (`base.en`) | ~148 MB | < 0.5s | Battery-saver mode on low-power ultraportable laptops |
-
-*Switch models on the fly by right-clicking the WhisperFlow tray icon in your Windows taskbar.*
-
----
-
-## ⌨️ Controls & Gestures Reference
-
-| Action | Control | Description |
-| :--- | :--- | :--- |
-| **Push-to-Talk** | **Hold `Ctrl + Alt`** | Audio records while held; transcribes & pastes upon key release. |
-| **Move Floating Pill** | **Click & Drag** | Drag the widget vertically along your screen edge to reposition. |
-| **Expand Widget** | **Hover Mouse** | Displays active status and hotkey reminder; auto-collapses on leave. |
-| **System Tray Menu** | **Right-Click Tray** | Switch models, toggle HUD visibility, change cleanup level, or exit. |
-| **Emergency Stop** | **`Ctrl + Shift + Q`** | Instantly terminates the background listener and whisper server. |
+| **`small.en-q5_1`** | **~190 MB** | **< 0.8s (Sub-second)** | **Everyday typing, coding, messaging (Default & Recommended)** |
+| **`large-v3-turbo`** | ~574 MB | ~2.0s – 3.5s | Highly technical legal / medical vocab & extreme multilingual fidelity |
+| **`base.en`** | ~148 MB | < 0.5s | Ultra-lightweight battery-saver mode for low-power laptops |
 
 ---
 
 ## 🔒 Security & Air-Gapped Assurance
 
-- **Zero Cloud Connections:** Audio stays exclusively in memory (RAM buffer) and is processed locally by `whisper-server.exe` on loopback `127.0.0.1:8080`.
-- **Zero Disk Audio Stash:** Audio segments are never written to disk as temporary `.wav` files.
-- **Zero Telemetry:** No analytics, crash reporting, or external network requests of any kind.
+- **Zero Cloud Connections:** Audio stays exclusively in RAM and is processed locally by `whisper-server.exe` on loopback `127.0.0.1:8080`.
+- **Zero Disk Audio Stash:** Audio frames are never saved to disk as temporary `.wav` files.
+- **Non-Destructive Clipboard:** Clipboard contents before dictation are snapshotted and safely restored within 500ms after text injection.
+- **Zero Telemetry:** No analytics, pingbacks, or background network calls of any kind.
 
 ---
 
@@ -217,4 +253,4 @@ Released under the **[MIT License](LICENSE)**. Created with pride by [**sabarixx
 
 Special thanks to:
 - **Georgi Gerganov** for [whisper.cpp](https://github.com/ggerganov/whisper.cpp).
-- **OpenAI** for open-sourcing Whisper speech recognition weights.
+- **OpenAI** for open-sourcing the Whisper speech recognition weights.

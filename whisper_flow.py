@@ -24,6 +24,7 @@ import json
 import threading
 import ctypes
 import psutil
+import io
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 LOG_FILE = os.path.join(BASE_DIR, "whisper_flow.log")
@@ -67,6 +68,16 @@ HTTP_SESSION.mount("http://", adapter)
 
 from desktop_hud import DesktopHUD
 from smart_cleanup import apply_smart_cleanup
+from quick_fix import spawn_quick_fix, record_correction_and_learn
+
+# Tracking last dictation for 1-click Quick Fix training (Alt + Z)
+last_dictation_event = {
+    "text": "",
+    "wav_path": "",
+    "hwnd": None,
+    "window_title": "",
+    "timestamp": 0
+}
 
 # Binary & Config paths
 def find_binary(filename):
@@ -85,9 +96,14 @@ PID_FILE = os.path.join(BASE_DIR, "whisper_flow.pid")
 CONFIG_FILE = os.path.join(BASE_DIR, "whisper_flow_config.json")
 
 MODEL_REGISTRY = {
-    "large-v3-turbo": os.path.join(BASE_DIR, "ggml-large-v3-turbo-q5_0.bin"),
-    "small": os.path.join(BASE_DIR, "ggml-small.en-q5_1.bin"),
-    "base": os.path.join(BASE_DIR, "ggml-base.en.bin"),
+    "large-v3-turbo": "ggml-large-v3-turbo-q5_0.bin",
+    "large": "ggml-large-v3-turbo-q5_0.bin",
+    "large-v3": "ggml-large-v3-turbo-q5_0.bin",
+    "small": "ggml-small.en-q5_1.bin",
+    "small.en": "ggml-small.en-q5_1.bin",
+    "small.en-q5_1": "ggml-small.en-q5_1.bin",
+    "base": "ggml-base.en.bin",
+    "base.en": "ggml-base.en.bin",
 }
 
 def get_config():
@@ -103,13 +119,25 @@ CONFIG = get_config()
 CLEANUP_LEVEL = CONFIG.get("cleanup_level", "medium").lower()
 
 def resolve_model_path():
-    req_model = CONFIG.get("model", "large-v3-turbo").lower()
-    if req_model in MODEL_REGISTRY and os.path.exists(MODEL_REGISTRY[req_model]):
-        return MODEL_REGISTRY[req_model]
-    for m_path in MODEL_REGISTRY.values():
-        if os.path.exists(m_path):
-            return m_path
-    return MODEL_REGISTRY["large-v3-turbo"]
+    req_model = CONFIG.get("model", "small").lower()
+    target_filename = MODEL_REGISTRY.get(req_model, "ggml-small.en-q5_1.bin")
+    search_dirs = [
+        BASE_DIR,
+        os.path.join(os.path.dirname(BASE_DIR), "whisper.cpp"),
+        os.path.join(BASE_DIR, "models"),
+    ]
+    # First search for the requested model
+    for d in search_dirs:
+        candidate = os.path.join(d, target_filename)
+        if os.path.exists(candidate):
+            return candidate
+    # Fallback to any available model in search dirs
+    for d in search_dirs:
+        for fname in MODEL_REGISTRY.values():
+            candidate = os.path.join(d, fname)
+            if os.path.exists(candidate):
+                return candidate
+    return os.path.join(BASE_DIR, target_filename)
 
 ACTIVE_MODEL_PATH = resolve_model_path()
 SAMPLE_RATE = 16000
@@ -169,16 +197,19 @@ def ensure_whisper_server():
         "-m", ACTIVE_MODEL_PATH,
         "--host", "127.0.0.1",
         "--port", "8080",
+        "-l", "en",
         "-t", "8",
         "-nt",
         "-sns",
-        "-nth", "0.35"
+        "-nth", "0.65"
     ]
     try:
         logging.info(f"Starting in-memory whisper server: {' '.join(cmd)}")
         creationflags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
-        server_process = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=creationflags)
-        for _ in range(30):
+        server_log_path = os.path.join(BASE_DIR, "whisper_server.log")
+        server_log_file = open(server_log_path, "w", encoding="utf-8")
+        server_process = subprocess.Popen(cmd, stdout=server_log_file, stderr=subprocess.STDOUT, creationflags=creationflags)
+        for _ in range(40):
             time.sleep(0.3)
             if is_server_healthy():
                 logging.info(f"In-memory whisper-server online (PID {server_process.pid}) - Model fully warmed into RAM")
@@ -214,23 +245,100 @@ def play_beep_async(freq, duration_ms):
             pass
     threading.Thread(target=_beep, daemon=True).start()
 
-def is_hotkey_down():
-    """
-    STRICT SINGLE HOTKEY: ONLY [Ctrl + Alt].
-    Zero Windows key checks to avoid conflict with Start Menu & Wispr Flow.
-    Ignores hotkey if Tab is pressed (prevents Alt+Tab app switching from triggering recording).
-    """
+def is_key_pressed(vk):
+    """Direct hardware key state check via GetAsyncKeyState (immune to hook misses/latches)."""
     try:
-        if keyboard.is_pressed('tab'):
-            return False
-        ctrl = keyboard.is_pressed('ctrl') or keyboard.is_pressed('left ctrl') or keyboard.is_pressed('right ctrl')
-        alt = keyboard.is_pressed('alt') or keyboard.is_pressed('left alt') or keyboard.is_pressed('right alt')
-        return ctrl and alt
+        return bool(ctypes.windll.user32.GetAsyncKeyState(vk) & 0x8000)
     except Exception:
         return False
 
+def is_hotkey_down():
+    """
+    Checks if active Push-to-Talk hotkey is pressed.
+    Directly queries Win32 hardware state to eliminate stuck keys.
+    Supports both [Ctrl + Alt] and [Win + Alt] seamlessly.
+    Ignores hotkey if Tab is pressed (prevents Alt+Tab conflict).
+    """
+    try:
+        # Ignore if Tab is pressed (e.g. user is Alt+Tabbing between apps)
+        if is_key_pressed(0x09):  # VK_TAB
+            return False
+
+        alt = is_key_pressed(0x12) or is_key_pressed(0xA4) or is_key_pressed(0xA5)   # VK_MENU, VK_LMENU, VK_RMENU
+        ctrl = is_key_pressed(0x11) or is_key_pressed(0xA2) or is_key_pressed(0xA3)  # VK_CONTROL, VK_LCONTROL, VK_RCONTROL
+        win = is_key_pressed(0x5B) or is_key_pressed(0x5C)                           # VK_LWIN, VK_RWIN
+
+        configured = CONFIG.get("hotkey", "ctrl+alt").lower()
+        if "win" in configured and "alt" in configured:
+            return win and alt
+        elif "ctrl" in configured and "alt" in configured:
+            return (ctrl and alt) or (win and alt)
+        else:
+            return (ctrl and alt) or (win and alt)
+    except Exception:
+        return False
+
+def is_toggle_hotkey_down():
+    """Checks if Hands-Free toggle hotkey [Ctrl + Alt + Space] or [Win + Alt + Space] is pressed."""
+    try:
+        space = is_key_pressed(0x20)  # VK_SPACE
+        if not space:
+            return False
+        alt = is_key_pressed(0x12) or is_key_pressed(0xA4) or is_key_pressed(0xA5)
+        ctrl = is_key_pressed(0x11) or is_key_pressed(0xA2) or is_key_pressed(0xA3)
+        win = is_key_pressed(0x5B) or is_key_pressed(0x5C)
+        return (ctrl and alt and space) or (win and alt and space)
+    except Exception:
+        return False
+
+# Accidental key tap threshold (sub-350ms presses are ignored)
+MIN_AUDIO_DURATION = 0.35
+
+def calculate_audio_rms(audio_data):
+    """Calculate the Root-Mean-Square (RMS) amplitude of int16 audio array."""
+    if len(audio_data) == 0:
+        return 0.0
+    samples = audio_data.astype(np.float64).flatten()
+    return float(np.sqrt(np.mean(samples ** 2)))
+
+def is_audio_silent(audio_data, duration_sec):
+    """
+    Intelligent silence detector:
+    - Only flags silence on very short clips (< 1.0s) with low amplitude (accidental tap).
+    - Never drops sustained speech (>= 1.0s).
+    """
+    if duration_sec < MIN_AUDIO_DURATION:
+        return True
+    if duration_sec < 1.0:
+        peak = float(np.max(np.abs(audio_data)))
+        rms = calculate_audio_rms(audio_data)
+        # Background ambient mic noise is ~150-160 RMS; speech peak is > 800
+        if peak < 500 and rms < 130.0:
+            return True
+    return False
+
+HALLUCINATION_BLACKLIST = {
+    "[blank_audio]", "[silence]", "(silence)", "(music)", "(applause)",
+    "[applause]", "(bell rings)", "[whispering]", "(whispering)", ".", "you", "thank you."
+}
+
+def is_hallucination_or_empty(text: str) -> bool:
+    """Filter out empty text, Whisper silence tokens, or priming prompt regurgitation."""
+    if not text:
+        return True
+    cleaned = text.strip()
+    if not cleaned or len(cleaned) <= 1:
+        return True
+    if cleaned.lower() in HALLUCINATION_BLACKLIST:
+        return True
+    if "Numbers, OTPs, codes" in cleaned:
+        return True
+    return False
+
 def get_active_window_prompt():
     """Detect foreground application to dynamically prime Whisper with domain vocabulary."""
+    global CONFIG
+    CONFIG = get_config()
     title = ""
     try:
         hwnd = ctypes.windll.user32.GetForegroundWindow()
@@ -242,88 +350,161 @@ def get_active_window_prompt():
     except Exception:
         pass
 
-    base_priming = "Numbers, OTPs, codes: 1, 2, 3, 555-0123, 32559, 8:30 PM, $50, 449911, Python, PowerShell, Wispr Flow, API."
+    base_priming = "Clear English speech dictation. Accurate punctuation, technical terminology, and natural phrasing."
 
-    coding_indicators = ["code", "visual studio", "terminal", "powershell", "cmd", "bash", "sublime", "git", "intellij", "pycharm"]
+    coding_indicators = ["code", "visual studio", "terminal", "powershell", "cmd", "bash", "sublime", "git", "intellij", "pycharm", ".py", ".ts", ".js", ".cpp", ".rs"]
     comm_indicators = ["slack", "teams", "outlook", "chrome", "edge", "firefox", "discord", "mail", "whatsapp"]
 
     domain_terms = []
     if any(ind in title for ind in coding_indicators):
-        domain_terms = ["Python", "PowerShell", "JSON", "API", "Git", "function", "variable", "CLI", "terminal", "async", "def", "class"]
+        domain_terms = ["Python", "PowerShell", "JSON", "API", "Git", "function", "variable", "CLI", "terminal", "async", "def", "class", "return", "import"]
     elif any(ind in title for ind in comm_indicators):
         domain_terms = ["email", "meeting", "schedule", "calendar", "message", "project", "client", "deadline", "regards"]
 
     custom_vocab = CONFIG.get("custom_vocabulary", [])
+    # Also inject user-defined replacement target words into Whisper's priming prompt
+    rep_targets = list(CONFIG.get("word_replacements", {}).values())
 
     all_prompts = [base_priming]
     if domain_terms:
         all_prompts.append(", ".join(domain_terms))
     if custom_vocab:
         all_prompts.append(", ".join(custom_vocab))
+    if rep_targets:
+        all_prompts.append(", ".join(rep_targets))
 
     return " ".join(all_prompts)
 
-def transcribe_audio(wav_path):
+def transcribe_audio(audio_source, temp_wav_path=None):
     """
-    Transcribes audio using in-memory whisper-server.exe,
-    falling back to whisper-cli.exe if the server is unreachable.
-    Timeout is set to 45s to avoid false-positive aborts on long speech.
+    Ultra-low latency in-memory transcription:
+    If audio_source is a numpy array, encodes directly in RAM (BytesIO) with 0 disk I/O.
+    Falls back to whisper-cli.exe if the server is unreachable.
     """
     prompt = get_active_window_prompt()
 
-    # Strategy 1: High-speed In-Memory Server HTTP POST
-    if is_server_healthy():
+    wav_bytes = None
+    if isinstance(audio_source, np.ndarray):
+        buf = io.BytesIO()
+        wav.write(buf, SAMPLE_RATE, audio_source)
+        wav_bytes = buf.getvalue()
+    elif isinstance(audio_source, (bytes, bytearray)):
+        wav_bytes = audio_source
+    elif isinstance(audio_source, str) and os.path.exists(audio_source):
+        with open(audio_source, "rb") as f:
+            wav_bytes = f.read()
+
+    # Strategy 1: Sub-millisecond In-Memory Server HTTP POST (Zero Disk I/O)
+    if is_server_healthy() and wav_bytes:
         try:
-            with open(wav_path, "rb") as f:
-                files = {"file": ("audio.wav", f, "audio/wav")}
-                data = {
-                    "temperature": "0.0",
-                    "response_format": "json",
-                    "prompt": prompt
-                }
-                resp = HTTP_SESSION.post(f"{SERVER_URL}/inference", files=files, data=data, timeout=180.0)
-                if resp.status_code == 200:
-                    text = resp.json().get("text", "").strip()
-                    return text
+            files = {"file": ("audio.wav", wav_bytes, "audio/wav")}
+            data = {
+                "temperature": "0.0",
+                "response_format": "json",
+                "prompt": prompt
+            }
+            dyn_timeout = max(60.0, (len(audio_source) / SAMPLE_RATE * 3.0) if isinstance(audio_source, np.ndarray) else 60.0)
+            resp = HTTP_SESSION.post(f"{SERVER_URL}/inference", files=files, data=data, timeout=dyn_timeout)
+            if resp.status_code == 200:
+                text = resp.json().get("text", "").strip()
+                return text
         except Exception as e:
             logging.warning(f"whisper-server inference failed: {e}. Falling back to CLI.")
 
-    # Strategy 2: CLI Fallback
-    cmd = [
-        WHISPER_CLI,
-        "-m", ACTIVE_MODEL_PATH,
-        "-f", wav_path,
-        "-nt",
-        "-np",
-        "-t", "8",
-        "-fa",
-        "-nth", "0.35",
-        "-sns",
-        "--prompt", prompt
-    ]
-    try:
-        res = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
-        )
-        return res.stdout.strip()
-    except Exception as e:
-        logging.error(f"whisper-cli execution failed: {e}")
-        return ""
+    # Strategy 2: CLI Fallback (requires disk file)
+    target_wav = audio_source if isinstance(audio_source, str) else temp_wav_path
+    if not target_wav or not os.path.exists(target_wav):
+        if wav_bytes and temp_wav_path:
+            with open(temp_wav_path, "wb") as f:
+                f.write(wav_bytes)
+            target_wav = temp_wav_path
 
-def paste_text(text):
+    if target_wav and os.path.exists(target_wav):
+        cmd = [
+            WHISPER_CLI,
+            "-m", ACTIVE_MODEL_PATH,
+            "-f", target_wav,
+            "-nt",
+            "-np",
+            "-t", "8",
+            "-fa",
+            "-nth", "0.65",
+            "-sns",
+            "--prompt", prompt
+        ]
+        try:
+            res = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                timeout=45.0,
+                creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+            )
+            return res.stdout.strip()
+        except Exception as e:
+            logging.error(f"whisper-cli execution failed: {e}")
+
+    return ""
+
+def paste_text(text, target_hwnd=None):
     if not text:
         return
-    while keyboard.is_pressed('ctrl') or keyboard.is_pressed('alt'):
+
+    # Wait for hotkey release with a strict 0.5s timeout using GetAsyncKeyState
+    start = time.time()
+    while time.time() - start < 0.5:
+        alt = is_key_pressed(0x12) or is_key_pressed(0xA4) or is_key_pressed(0xA5)
+        ctrl = is_key_pressed(0x11) or is_key_pressed(0xA2) or is_key_pressed(0xA3)
+        win = is_key_pressed(0x5B) or is_key_pressed(0x5C)
+        if not (alt or ctrl or win):
+            break
         time.sleep(0.02)
-    time.sleep(0.05)
-    
-    pyperclip.copy(text)
-    time.sleep(0.05)
-    keyboard.send('ctrl+v')
+    time.sleep(0.04)
+
+    # 1. Preserve user's existing clipboard contents (zero clipboard pollution)
+    old_clipboard = None
+    try:
+        old_clipboard = pyperclip.paste()
+    except Exception:
+        pass
+
+    # 2. Robust Window Focus Reassertion with AttachThreadInput
+    if target_hwnd and ctypes.windll.user32.IsWindow(target_hwnd):
+        try:
+            fg_hwnd = ctypes.windll.user32.GetForegroundWindow()
+            if fg_hwnd != target_hwnd:
+                cur_thread = ctypes.windll.kernel32.GetCurrentThreadId()
+                target_thread = ctypes.windll.user32.GetWindowThreadProcessId(target_hwnd, None)
+                if cur_thread != target_thread:
+                    ctypes.windll.user32.AttachThreadInput(cur_thread, target_thread, True)
+                    ctypes.windll.user32.SetForegroundWindow(target_hwnd)
+                    ctypes.windll.user32.BringWindowToTop(target_hwnd)
+                    ctypes.windll.user32.AttachThreadInput(cur_thread, target_thread, False)
+                else:
+                    ctypes.windll.user32.SetForegroundWindow(target_hwnd)
+            time.sleep(0.04)
+        except Exception:
+            pass
+
+    # 3. High-Speed Clipboard Injection
+    try:
+        pyperclip.copy(text)
+        time.sleep(0.04)
+        keyboard.send('ctrl+v')
+        time.sleep(0.06)
+    except Exception as e:
+        logging.warning(f"Clipboard paste failed: {e}")
+
+    # 4. Asynchronously restore original clipboard contents after 0.5s
+    def _restore_clipboard():
+        try:
+            time.sleep(0.5)
+            if old_clipboard is not None:
+                pyperclip.copy(old_clipboard)
+        except Exception:
+            pass
+    threading.Thread(target=_restore_clipboard, daemon=True).start()
 
 def create_tray_icon_image(state="idle"):
     img = Image.new("RGBA", (64, 64), color=(0, 0, 0, 0))
@@ -476,11 +657,18 @@ def main():
 
     audio_frames = []
     is_recording = False
+    is_hands_free = False
+    release_start_time = None
+    last_toggle_press_time = 0
     stream = None
 
     def audio_callback(indata, frames, time_info, status):
         if is_recording:
             audio_frames.append(indata.copy())
+            if hud:
+                # Real-time vocal amplitude fed to HUD 60 FPS equalizer
+                peak = float(np.max(np.abs(indata)))
+                hud.set_audio_level(min(1.0, peak / 2500.0))
 
     stream = sd.InputStream(
         samplerate=SAMPLE_RATE,
@@ -503,27 +691,75 @@ def main():
                 hud.ensure_alive()
 
             hotkey_active = is_hotkey_down()
+            toggle_active = is_toggle_hotkey_down()
+            esc_pressed = is_key_pressed(0x1B)  # VK_ESCAPE
 
-            if hotkey_active and not is_recording:
-                # Started pressing hotkey
-                is_recording = True
-                audio_frames = []
-                play_beep_async(900, 60)
-                if hud:
-                    hud.set_state("recording")
-                if tray_icon:
-                    try:
-                        tray_icon.icon = create_tray_icon_image("recording")
-                        tray_icon.title = "WhisperFlow - Recording..."
-                    except Exception:
-                        pass
-                print("[RECORDING...] Speak now...", end="\r", flush=True)
+            should_stop_recording = False
 
-            elif not hotkey_active and is_recording:
-                # Released hotkey - allow short tail buffer to capture final syllable
-                time.sleep(0.2)
+            # Case A: Hands-Free Dictation Toggle (Ctrl + Alt + Space)
+            if toggle_active and (now_loop - last_toggle_press_time > 0.5):
+                last_toggle_press_time = now_loop
+                if not is_recording:
+                    # Enter Hands-Free Recording Mode
+                    is_recording = True
+                    is_hands_free = True
+                    release_start_time = None
+                    audio_frames = []
+                    play_beep_async(1050, 70)
+                    if hud:
+                        hud.set_state("recording", text="Hands-Free...")
+                    if tray_icon:
+                        try:
+                            tray_icon.icon = create_tray_icon_image("recording")
+                            tray_icon.title = "WhisperFlow - Hands-Free Dictating..."
+                        except Exception:
+                            pass
+                    print("[HANDS-FREE] Recording continuously... Press Ctrl+Alt+Space or Esc to finish.", flush=True)
+                else:
+                    # Finished hands-free recording
+                    should_stop_recording = True
+
+            elif is_hands_free:
+                # In hands-free mode, pressing Escape finishes and pastes
+                if esc_pressed and (now_loop - last_toggle_press_time > 0.3):
+                    last_toggle_press_time = now_loop
+                    should_stop_recording = True
+
+            # Case B: Push-to-Talk Mode (Hold Ctrl+Alt with 450ms sustained release debounce)
+            elif not is_hands_free:
+                if hotkey_active:
+                    release_start_time = None
+                    if not is_recording:
+                        # Started pressing hotkey
+                        is_recording = True
+                        audio_frames = []
+                        play_beep_async(900, 60)
+                        if hud:
+                            hud.set_state("recording")
+                        if tray_icon:
+                            try:
+                                tray_icon.icon = create_tray_icon_image("recording")
+                                tray_icon.title = "WhisperFlow - Recording..."
+                            except Exception:
+                                pass
+                        print("[RECORDING...] Speak now...", end="\r", flush=True)
+
+                elif is_recording:
+                    # Key is NOT down right now: check release debounce window
+                    if release_start_time is None:
+                        release_start_time = now_loop
+
+                    # Only stop if released continuously for at least 450ms!
+                    # Prevents premature cutoffs from keyboard matrix chatter or finger shifts
+                    if (now_loop - release_start_time) >= 0.45:
+                        should_stop_recording = True
+
+            # Process Completed Recording
+            if should_stop_recording and is_recording:
                 is_recording = False
-                time.sleep(0.15)
+                is_hands_free = False
+                release_start_time = None
+                time.sleep(0.08)
                 play_beep_async(650, 60)
                 if hud:
                     hud.set_state("transcribing")
@@ -539,27 +775,61 @@ def main():
                     audio_data = np.concatenate(audio_frames, axis=0)
                     duration_sec = len(audio_data) / SAMPLE_RATE
 
-                    if duration_sec >= 0.3:
-                        wav.write(temp_wav, SAMPLE_RATE, audio_data)
-                        raw_text = transcribe_audio(temp_wav)
+                    if is_audio_silent(audio_data, duration_sec):
+                        if hud:
+                            hud.set_state("idle")
+                        print(f"[INFO] Audio too short or silent ({duration_sec:.2f}s), ignored.\n")
+                    else:
+                        # Ultra-fast in-memory transcription directly from RAM buffer (0 disk wait)
+                        raw_text = transcribe_audio(audio_data, temp_wav_path=temp_wav)
 
-                        if raw_text:
+                        if raw_text and not is_hallucination_or_empty(raw_text):
+                            # Cache audio file for QuickFix vault
+                            try:
+                                wav.write(temp_wav, SAMPLE_RATE, audio_data)
+                            except Exception:
+                                pass
                             cleaned_text = apply_smart_cleanup(raw_text, level=CLEANUP_LEVEL, config=CONFIG)
                             logging.info(f"Raw: '{raw_text}' -> Cleaned: '{cleaned_text}'")
                             print(f"[RAW]: \"{raw_text}\"")
                             print(f"[CLEANED]: \"{cleaned_text}\"")
-                            paste_text(cleaned_text)
+
+                            # Capture target window details before pasting
+                            target_hwnd = ctypes.windll.user32.GetForegroundWindow()
+                            target_title = ""
+                            try:
+                                tl = ctypes.windll.user32.GetWindowTextLengthW(target_hwnd)
+                                if tl > 0:
+                                    tbuf = ctypes.create_unicode_buffer(tl + 1)
+                                    ctypes.windll.user32.GetWindowTextW(target_hwnd, tbuf, tl + 1)
+                                    target_title = tbuf.value
+                            except Exception:
+                                pass
+
+                            # Keep an audio snapshot for the vault in case user corrects
+                            last_wav_snapshot = os.path.join(tempfile.gettempdir(), f"whisper_flow_last_{int(time.time())}.wav")
+                            try:
+                                import shutil
+                                shutil.copy2(temp_wav, last_wav_snapshot)
+                            except Exception:
+                                last_wav_snapshot = temp_wav
+
+                            last_dictation_event = {
+                                "text": cleaned_text,
+                                "wav_path": last_wav_snapshot,
+                                "hwnd": target_hwnd,
+                                "window_title": target_title,
+                                "timestamp": time.time()
+                            }
+
+                            paste_text(cleaned_text, target_hwnd=target_hwnd)
                             if hud:
-                                hud.set_state("done")
-                            print("[PASTED] Done!\n")
+                                hud.set_state("done", text="Pasted! [Alt+Z to Fix]")
+                            print("[PASTED] Done! (Press [Alt + Z] to correct & train)\n")
                         else:
                             if hud:
                                 hud.set_state("idle")
-                            print("[INFO] No speech detected.\n")
-                    else:
-                        if hud:
-                            hud.set_state("idle")
-                        print("[INFO] Audio too short, ignored.\n")
+                            print("[INFO] No speech detected or blank audio.\n")
                 else:
                     if hud:
                         hud.set_state("idle")
@@ -573,6 +843,26 @@ def main():
                         pass
 
                 print("Status: READY - listening for hotkey...", end="\r", flush=True)
+
+            # Check for Quick-Fix Hotkey: [Alt + Z] (VK_MENU + VK_Z)
+            is_alt = is_key_pressed(0x12) or is_key_pressed(0xA4) or is_key_pressed(0xA5)
+            is_z = is_key_pressed(0x5A)
+            if is_alt and is_z and not is_recording:
+                if last_dictation_event.get("text") and (time.time() - last_dictation_event.get("timestamp", 0) < 15.0):
+                    orig_to_fix = last_dictation_event["text"]
+                    last_dictation_event["timestamp"] = 0  # Consume event to prevent re-opening
+
+                    def handle_correction_submitted(corrected_text):
+                        global CONFIG
+                        learned = record_correction_and_learn(last_dictation_event, corrected_text, CONFIG_FILE)
+                        CONFIG = get_config()  # Hot-reload updated vocabulary & mappings into RAM
+                        lbl = f"Learned: {learned[0]}" if learned else "Model Updated!"
+                        if hud:
+                            hud.set_state("done", text=lbl)
+                        print(f"[LEARNED] Ground truth saved: '{orig_to_fix}' -> '{corrected_text}'")
+
+                    spawn_quick_fix(orig_to_fix, handle_correction_submitted)
+                    time.sleep(0.35)
 
             time.sleep(0.016)
 

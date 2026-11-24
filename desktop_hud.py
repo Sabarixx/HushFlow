@@ -97,6 +97,10 @@ class DesktopHUD:
         self.ready_event = threading.Event()
         self.lock = threading.Lock()
 
+        # Real-time reactive vocal modulation
+        self.audio_level = 0.0
+        self.smooth_audio_level = 0.0
+
         try:
             self.font_main = ImageFont.truetype("segoeuib.ttf", 13)
             self.font_badge = ImageFont.truetype("segoeuib.ttf", 10)
@@ -243,6 +247,11 @@ class DesktopHUD:
                             self.custom_text = None
                             self.done_timestamp = 0
 
+                    # Smooth audio amplitude decay for silky 60 FPS equalizer
+                    self.smooth_audio_level += (self.audio_level - self.smooth_audio_level) * 0.35
+                    # Passive decay if no audio update received
+                    self.audio_level *= 0.85
+
                     # Real-time cursor polling for instant hover expand & collapse
                     if not self.is_dragging:
                         try:
@@ -369,13 +378,24 @@ class DesktopHUD:
             if self.state == "recording":
                 d.text((text_x, 13), self.custom_text or "Listening...", fill=(239, 68, 68, 255), font=self.font_main)
                 wave_start_x = w - 65
+                # Live dynamic audio bars modulated by real vocal amplitude
                 for bi in range(5):
-                    bar_h = 3 + int(9 * abs(math.sin(self.anim_tick * 0.16 + bi * 1.1)))
+                    phase = math.sin(self.anim_tick * 0.22 + bi * 0.85)
+                    energy = max(0.12, min(1.0, self.smooth_audio_level * (0.65 + 0.35 * abs(phase))))
+                    bar_h = int(3 + 12 * energy)
                     bar_x = wave_start_x + bi * 7
                     d.rounded_rectangle((bar_x, cy - bar_h, bar_x + 3, cy + bar_h), radius=2, fill=(239, 68, 68, 255))
 
             elif self.state == "transcribing":
                 d.text((text_x, 13), self.custom_text or "Transcribing...", fill=(245, 158, 11, 255), font=self.font_main)
+                # Sleek animated glowing progress dots
+                dot_start_x = w - 50
+                for di in range(3):
+                    dphase = math.sin(self.anim_tick * 0.25 - di * 0.8)
+                    dalpha = int(120 + 135 * max(0, dphase))
+                    drad = 3 + int(1.5 * max(0, dphase))
+                    dx = dot_start_x + di * 12
+                    d.ellipse((dx - drad, cy - drad, dx + drad, cy + drad), fill=(245, 158, 11, dalpha))
 
             elif self.state == "done":
                 d.text((text_x, 13), self.custom_text or "Pasted!", fill=(16, 185, 129, 255), font=self.font_main)
@@ -504,6 +524,10 @@ class DesktopHUD:
                     )
                 except Exception:
                     pass
+
+    def set_audio_level(self, level: float):
+        """Update live audio level (0.0 to 1.0) for reactive equalizer."""
+        self.audio_level = max(0.0, min(1.0, float(level)))
 
     def set_state(self, state, text=None):
         self.state = state

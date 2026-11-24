@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Logs and PID
+*.log
+*.pid
+
+# Temporary WAV recordings
+*.wav
+
+# Local virtual environment
+venv/
+.env
+
+# Binary model files & training vault
+*.bin
+vault/
