@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="assets/banner.svg" alt="WhisperFlow - 100% Local AI Voice Dictation for Windows" width="100%"/>
+<img src="assets/banner.svg" alt="HushFlow - 100% Local AI Voice Dictation for Windows" width="100%"/>
 
 <br/><br/>
 
@@ -14,7 +14,7 @@
 <br/>
 
 <a href="https://github.com/sabarixx/HushFlow/archive/refs/heads/main.zip">
-  <img src="https://img.shields.io/badge/%E2%9E%A4%20DOWNLOAD%20WHISPERFLOW%20(LATEST%20ZIP)-22c55e?style=for-the-badge&logo=windows&logoColor=white" height="44" alt="Download WhisperFlow"/>
+  <img src="https://img.shields.io/badge/%E2%9E%A4%20DOWNLOAD%20HUSHFLOW%20(LATEST%20ZIP)-22c55e?style=for-the-badge&logo=windows&logoColor=white" height="44" alt="Download HushFlow"/>
 </a>
 &nbsp;&nbsp;
 <a href="#-quick-start-1-click-installation">
@@ -59,13 +59,13 @@
     </td>
     <td width="50%" valign="top">
       <h4>🧠 Self-Learning Vault (`Alt + Z` QuickFix)</h4>
-      <p>Spotted a misheard word? Press <b><code>Alt + Z</code></b> to open the QuickFix vault. WhisperFlow captures the acoustic correction, updates <code>learned_corrections.json</code>, and automatically eliminates future misrecognitions.</p>
+      <p>Spotted a misheard word? Press <b><code>Alt + Z</code></b> to open the QuickFix vault. HushFlow captures the acoustic correction, updates <code>learned_corrections.json</code>, and automatically eliminates future misrecognitions.</p>
     </td>
   </tr>
   <tr>
     <td colspan="2" valign="top">
-      <h4>🎮 WhisperFlow Studio (Standalone Control Center & ML Dashboard)</h4>
-      <p>Brand new dedicated desktop control application featuring the prominent WhisperFlow logo, 1-click <b>Start / Stop engine</b> process lifecycle, live microphone VU volume meter, interactive dictation scratchpad, and complete visual management of your acoustic self-learning rules vault.</p>
+      <h4>🎮 HushFlow Studio (Standalone Control Center & ML Dashboard)</h4>
+      <p>Brand new dedicated desktop control application featuring the prominent HushFlow logo, 1-click <b>Start / Stop engine</b> process lifecycle, live microphone VU volume meter, interactive dictation scratchpad, and complete visual management of your acoustic self-learning rules vault.</p>
     </td>
   </tr>
 </table>
@@ -74,7 +74,7 @@
 
 ## 📸 Real-World Transcription Showcase
 
-| Category | Spoken Dictation (Audio Input) | WhisperFlow Output (Typed in Real-Time) | Engine Intelligence |
+| Category | Spoken Dictation (Audio Input) | HushFlow Output (Typed in Real-Time) | Engine Intelligence |
 | :--- | :--- | :--- | :--- |
 | **Hands-Free Long Speech** | *"Rate the entire setup out of 10 in every criterion. To make it above 9.5, take an appropriate step. No mistake, and on the other hand don't let the rating go down."* | `Rate the entire setup out of 10 in every criterion. To make it above 9.5, take an appropriate step. No mistake, and on the other hand don't let the rating go down.` | Zero truncation over 10+ sentences, acoustic homophone engine (*"read"* &rarr; *"rate"*), perfect casing. |
 | **Voice Formatting** | *"Create a function named snake case calculate total tax new line and return total amount"* | `Create a function named calculate_total_tax`<br/>`and return total amount` | Voice formatting commands: `snake case`, `camel case`, `kebab case`, `all caps`, and spoken `new line` / `new paragraph`. |
@@ -84,9 +84,9 @@
 
 ---
 
-## 📊 Competitive Benchmark: WhisperFlow vs Commercial Alternatives
+## 📊 Competitive Benchmark: HushFlow vs Commercial Alternatives
 
-| Feature / Metric | **WhisperFlow (This Repo)** | **Wispr Flow** | **Superwhisper** | **Windows Voice (Win+H)** |
+| Feature / Metric | **HushFlow (This Repo)** | **Wispr Flow** | **Superwhisper** | **Windows Voice (Win+H)** |
 | :--- | :---: | :---: | :---: | :---: |
 | **Pricing** | **100% Free & Open-Source** | $120 / year | $100 / year | Free with Windows |
 | **Audio Privacy** | **100% Air-Gapped (RAM only)** | Cloud Streamed | Cloud / Local hybrid | Cloud Telemetry (Microsoft) |
@@ -148,12 +148,12 @@ flowchart TD
 
 ### Option 1: Automated 1-Click Setup (Recommended)
 
-1. [**Download WhisperFlow ZIP**](https://github.com/sabarixx/HushFlow/archive/refs/heads/main.zip) and extract it to any folder (e.g. `C:\Tools\WhisperFlow`).
+1. [**Download HushFlow ZIP**](https://github.com/sabarixx/HushFlow/archive/refs/heads/main.zip) and extract it to any folder (e.g. `C:\Tools\HushFlow`).
 2. Double-click **`install.bat`**.
    - Validates Python 3.10+.
    - Installs required lightweight packages (`sounddevice`, `numpy`, `pywin32`, `requests`).
    - Downloads the pre-quantized `ggml-small.en-q5_1.bin` model binary (~190 MB).
-   - Generates a **Start WhisperFlow (Local AI)** shortcut directly on your Windows Desktop.
+   - Generates a **Start HushFlow (Local AI)** shortcut directly on your Windows Desktop.
 3. Hold **`Ctrl + Alt`** to speak &rarr; release &rarr; your dictation is instantly typed!
    - Or press **`Ctrl + Alt + Space`** for continuous hands-free dictation.
 
@@ -162,7 +162,7 @@ flowchart TD
 ```powershell
 # 1. Clone the repository
 git clone https://github.com/Sabarixx/HushFlow.git
-cd WhisperFlow
+cd HushFlow
 
 # 2. Install requirements
 pip install -r requirements.txt
@@ -170,7 +170,7 @@ pip install -r requirements.txt
 # 3. Download the default quantized model
 powershell -Command "Invoke-WebRequest -Uri 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.en-q5_1.bin' -OutFile 'ggml-small.en-q5_1.bin'"
 
-# 4. Launch WhisperFlow in background
+# 4. Launch HushFlow in background
 pythonw.exe whisper_flow.py
 ```
 
@@ -182,7 +182,7 @@ pythonw.exe whisper_flow.py
 | :--- | :--- | :--- |
 | **Hold `Ctrl + Alt`** | **Push-to-Talk** | Records while held down; hardware-debounced transcription & injection upon key release. |
 | **`Ctrl + Alt + Space`** | **Hands-Free Toggle** | Starts continuous recording. Press again (or press `Escape`) to transcribe and paste. Perfect for long speech. |
-| **`Alt + Z`** | **QuickFix Learning Vault** | Opens the self-learning correction vault to instantly teach WhisperFlow new acoustic pronunciations and names. |
+| **`Alt + Z`** | **QuickFix Learning Vault** | Opens the self-learning correction vault to instantly teach HushFlow new acoustic pronunciations and names. |
 | **`Escape`** | **Cancel / Stop** | Cancels active hands-free recording without pasting. |
 | **`Ctrl + Shift + Q`** | **Emergency Stop** | Instantly terminates the background listener and `whisper-server.exe`. |
 | **Hover Floating Pill** | **HUD Expand** | Dynamically expands edge HUD to display status and shortcuts; snaps back on mouse leave. |
@@ -193,7 +193,7 @@ pythonw.exe whisper_flow.py
 
 ## 🗣️ Spoken Formatting Commands
 
-WhisperFlow comes equipped with built-in natural language voice formatting:
+HushFlow comes equipped with built-in natural language voice formatting:
 
 | Voice Command | Spoken Example | Typed Output |
 | :--- | :--- | :--- |
