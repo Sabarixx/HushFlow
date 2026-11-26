@@ -345,6 +345,156 @@ def is_toggle_hotkey_down():
         return False
 
 
+class HotkeyStateController:
+    """
+    Deterministic state machine unifying Push-to-Talk, Double-Tap Alt Lock
+    (Hands-Free), Ctrl+Alt+Space toggle, and floating HUD Done/Discard actions.
+    """
+
+    def __init__(
+        self,
+        tap_max_sec: float = 0.38,
+        double_tap_gap_sec: float = 0.52,
+        ptt_grace_sec: float = 0.45,
+        toggle_debounce_sec: float = 0.45,
+        lock_stop_guard_sec: float = 0.40,
+        max_locked_sec: float = 900.0,
+    ):
+        self.tap_max_sec = tap_max_sec
+        self.double_tap_gap_sec = double_tap_gap_sec
+        self.ptt_grace_sec = ptt_grace_sec
+        self.toggle_debounce_sec = toggle_debounce_sec
+        self.lock_stop_guard_sec = lock_stop_guard_sec
+        self.max_locked_sec = max_locked_sec
+
+        self.mode = "idle"  # "idle" | "ptt" | "locked"
+        self._prev_hotkey_down = False
+        self._prev_toggle_down = False
+        self._prev_esc_down = False
+        self._ptt_start_time = -10.0
+        self._ptt_press_time = None
+        self._ptt_release_time = None
+        self._last_short_tap_release_time = None
+        self._last_toggle_time = -10.0
+        self._lock_engaged_time = -10.0
+        self._await_lock_release = False
+
+    def _reset_to_idle(self, clear_tap_history: bool = True):
+        self.mode = "idle"
+        self._ptt_press_time = None
+        self._ptt_release_time = None
+        self._await_lock_release = False
+        if clear_tap_history:
+            self._last_short_tap_release_time = None
+
+    def _engage_lock(self, now: float):
+        self.mode = "locked"
+        self._await_lock_release = True
+        self._lock_engaged_time = now
+        self._ptt_release_time = None
+        self._last_short_tap_release_time = None
+
+    def step(
+        self,
+        now: float,
+        hotkey_down: bool,
+        toggle_down: bool,
+        esc_down: bool,
+        config: dict,
+        pill_action: str = None,
+    ) -> str:
+        """Advance state by one tick and return action: none|start_ptt|start_locked|upgrade_to_locked|transcribe|cancel."""
+        hotkey_edge = hotkey_down and not self._prev_hotkey_down
+        hotkey_fall = (not hotkey_down) and self._prev_hotkey_down
+        toggle_edge = toggle_down and not self._prev_toggle_down
+        esc_edge = esc_down and not self._prev_esc_down
+
+        self._prev_hotkey_down = hotkey_down
+        self._prev_toggle_down = toggle_down
+        self._prev_esc_down = esc_down
+
+        double_tap_enabled = bool(config.get("double_tap_lock", True))
+        toggle_enabled = bool(config.get("hands_free_toggle_enabled", True))
+
+        # 1. Explicit HUD floating pill buttons (Done -> transcribe, X -> discard)
+        if pill_action == "cancel" and self.mode in ("ptt", "locked"):
+            self._reset_to_idle(clear_tap_history=True)
+            return "cancel"
+        if pill_action == "finish" and self.mode in ("ptt", "locked"):
+            self._reset_to_idle(clear_tap_history=True)
+            return "transcribe"
+
+        # 2. Hands-Free toggle chord [Ctrl + Alt + Space]
+        if toggle_enabled and toggle_edge and (now - self._last_toggle_time) > self.toggle_debounce_sec:
+            self._last_toggle_time = now
+            if self.mode == "idle":
+                self._engage_lock(now)
+                return "start_locked"
+            if self.mode == "ptt" and (now - self._ptt_start_time) <= self.toggle_debounce_sec:
+                # Chord completion (Ctrl+Alt pressed just before Space) upgrades cleanly to locked listening
+                self._engage_lock(now)
+                return "upgrade_to_locked"
+            self._reset_to_idle(clear_tap_history=True)
+            return "transcribe"
+
+        # 3. Active Locked Hands-Free listening
+        if self.mode == "locked":
+            if self._await_lock_release:
+                if not hotkey_down and not toggle_down:
+                    self._await_lock_release = False
+            else:
+                if (now - self._lock_engaged_time) >= self.max_locked_sec:
+                    self._reset_to_idle(clear_tap_history=True)
+                    return "transcribe"
+                if (now - self._lock_engaged_time) >= self.lock_stop_guard_sec:
+                    if esc_edge or (hotkey_edge and not toggle_down):
+                        self._reset_to_idle(clear_tap_history=True)
+                        return "transcribe"
+            return "none"
+
+        # 4. Active Push-to-Talk hold
+        if self.mode == "ptt":
+            if hotkey_down:
+                if hotkey_edge:
+                    self._ptt_press_time = now
+                    if (
+                        double_tap_enabled
+                        and self._last_short_tap_release_time is not None
+                        and (now - self._last_short_tap_release_time) <= self.double_tap_gap_sec
+                    ):
+                        self._engage_lock(now)
+                        return "upgrade_to_locked"
+                self._ptt_release_time = None
+                return "none"
+
+            if hotkey_fall:
+                self._ptt_release_time = now
+                hold_dur = now - (self._ptt_press_time if self._ptt_press_time is not None else now)
+                self._last_short_tap_release_time = now if hold_dur <= self.tap_max_sec else None
+
+            if self._ptt_release_time is not None and (now - self._ptt_release_time) >= self.ptt_grace_sec:
+                self._reset_to_idle(clear_tap_history=False)
+                return "transcribe"
+            return "none"
+
+        # 5. Idle state
+        if hotkey_edge:
+            if (
+                double_tap_enabled
+                and self._last_short_tap_release_time is not None
+                and (now - self._last_short_tap_release_time) <= self.double_tap_gap_sec
+            ):
+                self._engage_lock(now)
+                return "start_locked"
+            self.mode = "ptt"
+            self._ptt_start_time = now
+            self._ptt_press_time = now
+            self._ptt_release_time = None
+            return "start_ptt"
+
+        return "none"
+
+
 MIN_AUDIO_DURATION = 0.35
 
 
@@ -445,11 +595,11 @@ def transcribe_audio(audio_source, temp_wav_path=None):
         with open(audio_source, "rb") as f:
             wav_bytes = f.read()
 
+    dyn_timeout = max(60.0, (len(audio_source) / SAMPLE_RATE * 3.0) if isinstance(audio_source, np.ndarray) else 60.0)
     if is_server_healthy() and wav_bytes:
         try:
             files = {"file": ("audio.wav", wav_bytes, "audio/wav")}
             data = {"temperature": "0.0", "response_format": "json", "prompt": prompt}
-            dyn_timeout = max(60.0, (len(audio_source) / SAMPLE_RATE * 3.0) if isinstance(audio_source, np.ndarray) else 60.0)
             resp = HTTP_SESSION.post(f"{SERVER_URL}/inference", files=files, data=data, timeout=dyn_timeout)
             if resp.status_code == 200:
                 return resp.json().get("text", "").strip()
@@ -485,7 +635,7 @@ def transcribe_audio(audio_source, temp_wav_path=None):
                 capture_output=True,
                 text=True,
                 encoding="utf-8",
-                timeout=45.0,
+                timeout=dyn_timeout,
                 creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
             )
             return res.stdout.strip()
@@ -666,10 +816,30 @@ def main():
 
     threading.Thread(target=ensure_whisper_server, daemon=True).start()
 
+    pending_pill_lock = threading.Lock()
+    pending_pill_action = None
+
+    def _queue_pill_action(act: str):
+        nonlocal pending_pill_action
+        with pending_pill_lock:
+            pending_pill_action = act
+
+    def _pop_pill_action():
+        nonlocal pending_pill_action
+        with pending_pill_lock:
+            act = pending_pill_action
+            pending_pill_action = None
+            return act
+
     hud = None
     try:
         hud_visible = CONFIG.get("hud_visible", True)
-        hud = DesktopHUD(config_path=CONFIG_PATH, visible=hud_visible)
+        hud = DesktopHUD(
+            config_path=CONFIG_PATH,
+            visible=hud_visible,
+            on_finish=lambda: _queue_pill_action("finish"),
+            on_cancel=lambda: _queue_pill_action("cancel"),
+        )
         _hud_ref = hud
     except Exception as e:
         logging.warning(f"Could not initialize desktop HUD: {e}")
@@ -742,9 +912,26 @@ def main():
     audio_frames = []
     is_recording = False
     is_hands_free = False
-    release_start_time = None
-    last_toggle_press_time = 0
+    locked_target_hwnd = None
+    controller = HotkeyStateController()
     stream = None
+
+    def _safe_tray_update(state: str, title: str):
+        if tray_icon:
+            try:
+                tray_icon.icon = create_tray_icon_image(state)
+                tray_icon.title = title
+            except Exception:
+                pass
+
+    def _capture_active_target_hwnd():
+        try:
+            fg = ctypes.windll.user32.GetForegroundWindow()
+            if fg and (not hud or not hud.hwnd or fg != hud.hwnd):
+                return fg
+        except Exception:
+            pass
+        return locked_target_hwnd
 
     def audio_callback(indata, frames, time_info, status):
         if is_recording:
@@ -797,71 +984,68 @@ def main():
             hotkey_active = is_hotkey_down()
             toggle_active = is_toggle_hotkey_down()
             esc_pressed = is_key_pressed(0x1B)
+            pill_action = _pop_pill_action()
 
-            should_stop_recording = False
+            action = controller.step(
+                now_loop,
+                hotkey_down=hotkey_active,
+                toggle_down=toggle_active,
+                esc_down=esc_pressed,
+                config=CONFIG,
+                pill_action=pill_action,
+            )
 
-            if toggle_active and (now_loop - last_toggle_press_time > 0.5):
-                last_toggle_press_time = now_loop
-                if not is_recording:
-                    is_recording = True
-                    is_hands_free = True
-                    release_start_time = None
-                    audio_frames = []
-                    play_beep_async(1050, 70)
-                    notify_studio({"type": "state", "state": "recording"})
-                    if hud:
-                        hud.set_state("recording", text="Hands-Free...")
-                    if tray_icon:
-                        try:
-                            tray_icon.icon = create_tray_icon_image("recording")
-                            tray_icon.title = f"{APP_NAME} — Listening..."
-                        except Exception:
-                            pass
-                else:
-                    should_stop_recording = True
+            if action == "start_ptt":
+                locked_target_hwnd = _capture_active_target_hwnd()
+                audio_frames = []
+                is_hands_free = False
+                is_recording = True
+                play_beep_async(900, 60)
+                notify_studio({"type": "state", "state": "recording", "locked": False})
+                if hud:
+                    hud.set_state("recording", locked=False)
+                _safe_tray_update("recording", f"{APP_NAME} — Listening...")
 
-            elif is_hands_free:
-                if esc_pressed and (now_loop - last_toggle_press_time > 0.3):
-                    last_toggle_press_time = now_loop
-                    should_stop_recording = True
+            elif action == "start_locked":
+                locked_target_hwnd = _capture_active_target_hwnd()
+                audio_frames = []
+                is_hands_free = True
+                is_recording = True
+                play_beep_async(1180, 75)
+                notify_studio({"type": "state", "state": "recording", "locked": True})
+                if hud:
+                    hud.set_state("recording", locked=True)
+                _safe_tray_update("recording", f"{APP_NAME} — Hands-Free Locked")
 
-            elif not is_hands_free:
-                if hotkey_active:
-                    release_start_time = None
-                    if not is_recording:
-                        is_recording = True
-                        audio_frames = []
-                        play_beep_async(900, 60)
-                        notify_studio({"type": "state", "state": "recording"})
-                        if hud:
-                            hud.set_state("recording")
-                        if tray_icon:
-                            try:
-                                tray_icon.icon = create_tray_icon_image("recording")
-                                tray_icon.title = f"{APP_NAME} — Listening..."
-                            except Exception:
-                                pass
-                elif is_recording:
-                    if release_start_time is None:
-                        release_start_time = now_loop
-                    if (now_loop - release_start_time) >= 0.45:
-                        should_stop_recording = True
+            elif action == "upgrade_to_locked":
+                # Keep all audio already recorded since Tap 1 intact
+                is_hands_free = True
+                is_recording = True
+                play_beep_async(1180, 75)
+                notify_studio({"type": "state", "state": "recording", "locked": True})
+                if hud:
+                    hud.set_state("recording", locked=True)
+                _safe_tray_update("recording", f"{APP_NAME} — Hands-Free Locked")
 
-            if should_stop_recording and is_recording:
+            elif action == "cancel" and is_recording:
                 is_recording = False
                 is_hands_free = False
-                release_start_time = None
+                audio_frames = []
+                play_beep_async(420, 55)
+                if hud:
+                    hud.set_state("idle")
+                notify_studio({"type": "state", "state": "idle"})
+                _safe_tray_update("idle", f"{APP_NAME} — Ready")
+
+            elif action == "transcribe" and is_recording:
+                is_recording = False
+                is_hands_free = False
                 time.sleep(0.08)
                 play_beep_async(650, 60)
                 notify_studio({"type": "state", "state": "transcribing"})
                 if hud:
                     hud.set_state("transcribing")
-                if tray_icon:
-                    try:
-                        tray_icon.icon = create_tray_icon_image("transcribing")
-                        tray_icon.title = f"{APP_NAME} — Transcribing..."
-                    except Exception:
-                        pass
+                _safe_tray_update("transcribing", f"{APP_NAME} — Transcribing...")
 
                 if len(audio_frames) > 0:
                     audio_data = np.concatenate(audio_frames, axis=0)
@@ -877,7 +1061,7 @@ def main():
                             cleaned_text = apply_smart_cleanup(raw_text, level=CLEANUP_LEVEL, config=CONFIG)
                             logging.info(f"Transcribed ({duration_sec:.1f}s): len={len(cleaned_text)}")
 
-                            target_hwnd = ctypes.windll.user32.GetForegroundWindow()
+                            target_hwnd = _capture_active_target_hwnd() or locked_target_hwnd
                             target_title = ""
                             try:
                                 tl = ctypes.windll.user32.GetWindowTextLengthW(target_hwnd)
@@ -923,12 +1107,7 @@ def main():
                         hud.set_state("idle")
                     notify_studio({"type": "state", "state": "idle"})
 
-                if tray_icon:
-                    try:
-                        tray_icon.icon = create_tray_icon_image("idle")
-                        tray_icon.title = f"{APP_NAME} — Ready"
-                    except Exception:
-                        pass
+                _safe_tray_update("idle", f"{APP_NAME} — Ready")
 
             # Check QuickFix Hotkey [Alt + Z]
             is_alt = is_key_pressed(0x12) or is_key_pressed(0xA4) or is_key_pressed(0xA5)

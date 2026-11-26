@@ -71,11 +71,15 @@ def get_screen_work_area():
 
 
 class DesktopHUD:
-    def __init__(self, config_path=None, visible=True):
+    def __init__(self, config_path=None, visible=True, on_finish=None, on_cancel=None):
         self.config_path = config_path
         self.visible = visible
+        self.on_finish = on_finish
+        self.on_cancel = on_cancel
         self.state = "idle"  # idle, recording, transcribing, done
+        self.is_locked = False
         self.custom_text = None
+        self.recording_start_time = 0.0
         self.running = True
         self.is_hovered = False
         self.is_dragging = False
@@ -85,11 +89,17 @@ class DesktopHUD:
         # Base dimensions (HiDPI native)
         self.collapsed_w = 46
         self.expanded_w = 236
+        self.locked_w = 294
         self.current_w = float(self.collapsed_w)
         self.target_w = float(self.collapsed_w)
         self.h = 42
         self.x = 4
         self.y = self._load_dock_y()
+
+        self._btn_finish_rect = None
+        self._btn_cancel_rect = None
+        self._hover_btn = None
+        self._pressed_btn = None
 
         self.anim_tick = 0
         self.done_timestamp = 0
@@ -138,11 +148,43 @@ class DesktopHUD:
         cfg["dock_y"] = int(self.y)
         save_config(cfg)
 
+    def _hit_test_button(self, lx: int, ly: int):
+        """Return 'finish' or 'cancel' when local pill coordinates (lx, ly) hit an action button."""
+        if not (self.state == "recording" and self.is_locked):
+            return None
+        for name, rect in (("finish", self._btn_finish_rect), ("cancel", self._btn_cancel_rect)):
+            if rect and rect[0] <= lx <= rect[2] and rect[1] <= ly <= rect[3]:
+                return name
+        return None
+
+    def _trigger_pill_callback(self, btn_name: str):
+        cb = self.on_finish if btn_name == "finish" else self.on_cancel
+        if cb:
+            threading.Thread(target=cb, daemon=True).start()
+
     def _wnd_proc(self, hwnd, msg, wparam, lparam):
+        if msg == 0x0021:  # WM_MOUSEACTIVATE
+            return 3  # MA_NOACTIVATE — never steal focus from user's target app
+
+        if msg == 0x0020:  # WM_SETCURSOR
+            try:
+                cx, cy = win32api.GetCursorPos()
+                hit = self._hit_test_button(cx - self.x, cy - self.y)
+                cur_id = win32con.IDC_HAND if hit else win32con.IDC_ARROW
+                win32gui.SetCursor(win32gui.LoadCursor(0, cur_id))
+                return 1
+            except Exception:
+                pass
+
         if msg == win32con.WM_LBUTTONDOWN:
+            cx, cy = win32api.GetCursorPos()
+            hit = self._hit_test_button(cx - self.x, cy - self.y)
+            if hit:
+                self._pressed_btn = hit
+                win32gui.SetCapture(hwnd)
+                return 0
             self.is_dragging = True
-            cursor_y = win32api.GetCursorPos()[1]
-            self.drag_offset_y = cursor_y - self.y
+            self.drag_offset_y = cy - self.y
             win32gui.SetCapture(hwnd)
             return 0
 
@@ -150,9 +192,23 @@ class DesktopHUD:
             if self.is_dragging:
                 cursor_y = win32api.GetCursorPos()[1]
                 self.y = self._get_safe_y(cursor_y - self.drag_offset_y)
+            elif self._pressed_btn:
+                cx, cy = win32api.GetCursorPos()
+                self._hover_btn = self._hit_test_button(cx - self.x, cy - self.y)
             return 0
 
         elif msg == win32con.WM_LBUTTONUP:
+            if self._pressed_btn:
+                btn = self._pressed_btn
+                self._pressed_btn = None
+                try:
+                    win32gui.ReleaseCapture()
+                except Exception:
+                    pass
+                cx, cy = win32api.GetCursorPos()
+                if self._hit_test_button(cx - self.x, cy - self.y) == btn:
+                    self._trigger_pill_callback(btn)
+                return 0
             if self.is_dragging:
                 self.is_dragging = False
                 win32gui.ReleaseCapture()
@@ -203,7 +259,7 @@ class DesktopHUD:
                 style,
                 self.x,
                 self.y,
-                self.expanded_w,
+                max(self.expanded_w, self.locked_w),
                 self.h,
                 0,
                 0,
@@ -257,13 +313,23 @@ class DesktopHUD:
                                 self.x <= cursor_x <= (self.x + int(self.current_w) + 4)
                                 and self.y <= cursor_y <= (self.y + self.h)
                             )
+                            self._hover_btn = (
+                                self._hit_test_button(cursor_x - self.x, cursor_y - self.y)
+                                if self.is_hovered
+                                else None
+                            )
                         except Exception:
                             pass
                     else:
                         self.is_hovered = True
+                        self._hover_btn = None
 
-                    should_expand = self.is_hovered or (self.state in ("recording", "transcribing", "done"))
-                    self.target_w = float(self.expanded_w if should_expand else self.collapsed_w)
+                    if self.state == "recording" and self.is_locked:
+                        self.target_w = float(self.locked_w)
+                    elif self.is_hovered or (self.state in ("recording", "transcribing", "done")):
+                        self.target_w = float(self.expanded_w)
+                    else:
+                        self.target_w = float(self.collapsed_w)
 
                     self.current_w += (self.target_w - self.current_w) * 0.28
                     if abs(self.current_w - self.target_w) < 0.5:
@@ -335,11 +401,17 @@ class DesktopHUD:
             col = color_accent if i == 3 else color_main
             d.rounded_rectangle((bx0, by0, bx0 + bar_w, by1), radius=bar_w / 2, fill=col)
 
-    def _render_and_update(self):
-        if not self.hwnd or not win32gui.IsWindow(self.hwnd):
-            return
-
-        w = max(self.collapsed_w, int(round(self.current_w)))
+    def _render_bitmap(self, use_target_width: bool = False):
+        """Render current pill state at RENDER_SCALE and downsample cleanly via LANCZOS."""
+        if use_target_width:
+            if self.state == "recording" and self.is_locked:
+                w = self.locked_w
+            elif self.state in ("recording", "transcribing", "done"):
+                w = self.expanded_w
+            else:
+                w = self.collapsed_w
+        else:
+            w = max(self.collapsed_w, int(round(self.current_w)))
         h = self.h
         s = RENDER_SCALE
         sw, sh = w * s, h * s
@@ -412,17 +484,77 @@ class DesktopHUD:
             )
 
         else:
-            # Crisp mini HushFlow soundwave mark (zero bullseye rings)
             self._draw_mini_wave_emblem(
                 d, cx, cy, s,
                 color_main=(241, 245, 249, 255),
                 color_accent=(52, 211, 153, 255),
             )
 
+        if not (self.state == "recording" and self.is_locked):
+            self._btn_finish_rect = None
+            self._btn_cancel_rect = None
+
         if w > 105:
             text_x = 46 * s
-            if self.state == "recording":
-                label = self.custom_text or "Listening..."
+            if self.state == "recording" and self.is_locked and w >= 250:
+                elapsed = max(0, int(time.time() - self.recording_start_time)) if self.recording_start_time else 0
+                if self._hover_btn == "finish":
+                    label = "Transcribe"
+                    label_col = (110, 231, 183, 255)
+                elif self._hover_btn == "cancel":
+                    label = "Discard"
+                    label_col = (252, 165, 165, 255)
+                else:
+                    label = f"Locked {elapsed // 60}:{elapsed % 60:02d}"
+                    label_col = (248, 250, 252, 255)
+
+                d.text((text_x, 12 * s), label, fill=label_col, font=self.font_main)
+
+                # Compact 4-bar waveform to the left of action buttons
+                wave_start_x = (w - 114) * s
+                for bi in range(4):
+                    phase = math.sin(self.anim_tick * 0.22 + bi * 0.85)
+                    energy = max(0.14, min(1.0, self.smooth_audio_level * (0.65 + 0.35 * abs(phase))))
+                    bar_h = (2.6 + 9.2 * energy) * s
+                    bx = wave_start_x + bi * 7 * s
+                    d.rounded_rectangle(
+                        (bx, cy - bar_h, bx + 3.0 * s, cy + bar_h),
+                        radius=int(1.5 * s),
+                        fill=(239, 68, 68, 245),
+                    )
+
+                # Action Button 1: Done / Transcribe (checkmark circle)
+                btn_d = 26
+                fy0 = (h - btn_d) // 2
+                fx0 = w - 68
+                fx1 = fx0 + btn_d
+                self._btn_finish_rect = (fx0 - 2, 4, fx1 + 1, h - 4)
+                f_hot = self._hover_btn == "finish"
+                f_fill = (16, 185, 129, 255 if f_hot else 218)
+                f_out = (110, 231, 183, 255) if f_hot else (52, 211, 153, 245)
+                d.ellipse((fx0 * s, fy0 * s, fx1 * s, (fy0 + btn_d) * s), fill=f_fill, outline=f_out, width=s)
+                fcx, fcy = (fx0 + btn_d / 2.0) * s, cy
+                d.line((fcx - 4.8 * s, fcy + 0.3 * s, fcx - 1.2 * s, fcy + 3.8 * s), fill=(8, 12, 18, 255), width=int(2.2 * s))
+                d.line((fcx - 1.2 * s, fcy + 3.8 * s, fcx + 5.2 * s, fcy - 3.6 * s), fill=(8, 12, 18, 255), width=int(2.2 * s))
+
+                # Action Button 2: Discard / Cancel (cross circle)
+                cx0 = w - 36
+                cx1 = cx0 + btn_d
+                self._btn_cancel_rect = (cx0 - 1, 4, cx1 + 2, h - 4)
+                c_hot = self._hover_btn == "cancel"
+                c_fill = (239, 68, 68, 238 if c_hot else 44)
+                c_out = (248, 113, 113, 255) if c_hot else (75, 89, 114, 230)
+                c_fg = (255, 255, 255, 255 if c_hot else 215)
+                d.ellipse((cx0 * s, fy0 * s, cx1 * s, (fy0 + btn_d) * s), fill=c_fill, outline=c_out, width=s)
+                ccx, ccy = (cx0 + btn_d / 2.0) * s, cy
+                r_x = 3.8 * s
+                d.line((ccx - r_x, ccy - r_x, ccx + r_x, ccy + r_x), fill=c_fg, width=int(1.9 * s))
+                d.line((ccx + r_x, ccy - r_x, ccx - r_x, ccy + r_x), fill=c_fg, width=int(1.9 * s))
+
+            elif self.state == "recording":
+                elapsed = max(0, int(time.time() - self.recording_start_time)) if self.recording_start_time else 0
+                default_lbl = f"Listening {elapsed // 60}:{elapsed % 60:02d}" if elapsed >= 3 else "Listening..."
+                label = self.custom_text or default_lbl
                 d.text((text_x, 12 * s), label, fill=(248, 250, 252, 255), font=self.font_main)
                 wave_start_x = (w - 60) * s
                 for bi in range(5):
@@ -462,8 +594,18 @@ class DesktopHUD:
                 )
                 d.text((kx + 11 * s, ky + 4 * s), "Ctrl + Alt", fill=(203, 213, 225, 255), font=self.font_badge)
 
-        # Downsample 3x canvas via LANCZOS to exact target dimensions
-        img = hi.resize((w, h), Image.Resampling.LANCZOS)
+        return hi.resize((w, h), Image.Resampling.LANCZOS)
+
+    def render_preview_image(self, use_target_width: bool = True):
+        """Return a 1x RGBA PIL snapshot of the current pill layout for tests or inspection."""
+        return self._render_bitmap(use_target_width=use_target_width)
+
+    def _render_and_update(self):
+        if not self.hwnd or not win32gui.IsWindow(self.hwnd):
+            return
+
+        img = self._render_bitmap()
+        w, h = img.size
 
         arr = np.array(img, dtype=np.uint8)
         r = arr[:, :, 0].astype(np.uint32)
@@ -581,9 +723,19 @@ class DesktopHUD:
         """Update live audio level (0.0 to 1.0) for reactive equalizer."""
         self.audio_level = max(0.0, min(1.0, float(level)))
 
-    def set_state(self, state, text=None):
+    def set_state(self, state, text=None, locked=None):
+        if state == "recording" and self.state != "recording":
+            self.recording_start_time = time.time()
         self.state = state
         self.custom_text = text
+        if locked is not None:
+            self.is_locked = bool(locked)
+        if state != "recording":
+            self.is_locked = False
+            self._btn_finish_rect = None
+            self._btn_cancel_rect = None
+            self._hover_btn = None
+            self._pressed_btn = None
         if state == "done":
             self.done_timestamp = time.time()
         if self.visible and self.hwnd and win32gui.IsWindow(self.hwnd):

@@ -173,9 +173,11 @@ powershell -ExecutionPolicy Bypass -File packaging\build_installer.ps1
 | Shortcut / Action | Mode | Description |
 | :--- | :--- | :--- |
 | **Hold `Ctrl + Alt`** | **Push-to-Talk** | Records while held down; hardware-debounced transcription & injection upon key release. |
-| **`Ctrl + Alt + Space`** | **Hands-Free Toggle** | Starts continuous recording. Press again (or press `Escape`) to transcribe and paste. Perfect for long speech. |
+| **`Ctrl + Double-Tap Alt`** | **Hands-Free Lock** | Hold `Ctrl` and double-tap `Alt` (toggleable in Settings) to lock continuous long-form listening without holding keys. |
+| **`Ctrl + Alt + Space`** | **Hands-Free Toggle** | Alternative chord to lock/stop continuous recording and transcribe when finished. |
+| **Pill `✓` / `×` Buttons** | **Finish or Discard** | While locked on the left floating pill, click **`✓`** to stop &amp; transcribe your paragraph, or **`×`** to discard cleanly. |
 | **`Alt + Z`** | **QuickFix Learning Vault** | Opens the self-learning correction vault to instantly teach HushFlow new acoustic pronunciations and names. |
-| **`Escape`** | **Cancel / Stop** | Cancels active hands-free recording without pasting. |
+| **`Escape`** | **Stop &amp; Transcribe** | Stops active hands-free listening cleanly from the keyboard and transcribes what you spoke. |
 | **`Ctrl + Shift + Q`** | **Emergency Stop** | Instantly terminates the background listener and `whisper-server.exe`. |
 | **Hover Floating Pill** | **HUD Expand** | Dynamically expands edge HUD to display status and shortcuts; snaps back on mouse leave. |
 | **Drag Floating Pill** | **HUD Reposition** | Left-click and drag vertically to dock the HUD at any preferred screen height. |

@@ -79,6 +79,8 @@ DEFAULT_CONFIG = {
     "hud_visible": True,
     "hotkey": "ctrl+alt",
     "toggle_hotkey": "ctrl+alt+space",
+    "double_tap_lock": True,
+    "hands_free_toggle_enabled": True,
     "dock_y": 360,
     "mic_device": None,
     "save_training_audio": False,

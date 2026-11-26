@@ -545,10 +545,12 @@ def build_studio_html(logo_data_uri: str = "") -> str:
     border: 1px solid var(--border-strong);
     border-bottom-width: 2px;
     border-radius: 6px;
+    white-space: nowrap;
   }}
 
   .kbd-row {{
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     gap: 6px;
     margin: 8px 0 6px;
@@ -1012,9 +1014,9 @@ def build_studio_html(logo_data_uri: str = "") -> str:
             <div class="card-sub">Hold while speaking anywhere in Windows, then release to paste cleanly.</div>
           </div>
           <div class="card" style="margin-bottom:0">
-            <div class="card-title">Hands-Free Mode</div>
-            <div class="kbd-row"><kbd>Ctrl</kbd><span style="color:var(--text-muted)">+</span><kbd>Alt</kbd><span style="color:var(--text-muted)">+</span><kbd>Space</kbd></div>
-            <div class="card-sub">Tap once for continuous multi-paragraph speech; tap again or <kbd style="padding:1px 5px;font-size:10px">Esc</kbd> to stop.</div>
+            <div class="card-title">Hands-Free Lock</div>
+            <div class="kbd-row" id="lock-hotkey-display"><kbd>Ctrl</kbd><span style="color:var(--text-muted)">+</span><kbd>2× Alt</kbd><span style="color:var(--text-muted);font-size:11px;margin:0 2px">or</span><kbd>Ctrl</kbd><span style="color:var(--text-muted)">+</span><kbd>Alt</kbd><span style="color:var(--text-muted)">+</span><kbd>Space</kbd></div>
+            <div class="card-sub">Double-tap to lock long listening; click <strong style="color:var(--accent-mint)">✓ Done</strong> or <strong style="color:var(--text-primary)">× Discard</strong> on the left pill.</div>
           </div>
         </div>
 
@@ -1131,6 +1133,13 @@ def build_studio_html(logo_data_uri: str = "") -> str:
           </div>
           <div class="setting-row">
             <div>
+              <div class="setting-title">Double-Tap Alt Lock (Hands-Free)</div>
+              <div class="setting-desc">Hold Ctrl and double-tap Alt (or quick double-tap) to lock continuous dictation for long paragraphs</div>
+            </div>
+            <label class="switch"><input type="checkbox" id="chk-double-tap" onchange="onToggleSetting('double_tap_lock', this.checked)" /><span class="slider"></span></label>
+          </div>
+          <div class="setting-row">
+            <div>
               <div class="setting-title">Smart Cleanup Mode</div>
               <div class="setting-desc">Filler word pruning & spoken retraction protection</div>
             </div>
@@ -1195,8 +1204,16 @@ def build_studio_html(logo_data_uri: str = "") -> str:
             <div><kbd>Ctrl</kbd> + <kbd>Alt</kbd></div>
           </div>
           <div class="setting-row">
-            <div><div class="setting-title">Hands-Free Toggle</div><div class="setting-desc">Continuous dictation without holding keys; Esc stops</div></div>
+            <div><div class="setting-title">Hands-Free Lock (Double-Tap)</div><div class="setting-desc">Hold Ctrl and double-tap Alt to lock long listening without holding keys</div></div>
+            <div id="shortcut-lock-display"><kbd>Ctrl</kbd> + <kbd>2× Alt</kbd></div>
+          </div>
+          <div class="setting-row">
+            <div><div class="setting-title">Hands-Free Chord Toggle</div><div class="setting-desc">Alternative toggle shortcut for continuous dictation; Esc or tap stops</div></div>
             <div><kbd>Ctrl</kbd> + <kbd>Alt</kbd> + <kbd>Space</kbd></div>
+          </div>
+          <div class="setting-row">
+            <div><div class="setting-title">Floating Pill Controls (While Locked)</div><div class="setting-desc">Click Done (✓) on the left pill to transcribe &amp; paste, or Discard (×) to cancel</div></div>
+            <div><kbd style="color:var(--accent-mint);border-color:rgba(52,211,153,0.4)">✓ Done</kbd> <kbd>× Discard</kbd></div>
           </div>
           <div class="setting-row">
             <div><div class="setting-title">QuickFix Lexicon Learn</div><div class="setting-desc">Correct the last dictated phrase & teach HushFlow</div></div>
@@ -1294,6 +1311,16 @@ def build_studio_html(logo_data_uri: str = "") -> str:
     return '<kbd>Ctrl</kbd><span style="color:var(--text-muted)">+</span><kbd>Alt</kbd>';
   }}
 
+  function formatLockHotkey(hk, doubleTapOn) {{
+    let base = '<kbd>Ctrl</kbd><span style="color:var(--text-muted)">+</span><kbd>2× Alt</kbd>';
+    if (hk === 'win+alt') base = '<kbd>Win</kbd><span style="color:var(--text-muted)">+</span><kbd>2× Alt</kbd>';
+    else if (hk === 'right_alt') base = '<kbd>2× Right Alt</kbd>';
+    if (!doubleTapOn) {{
+      return '<kbd>Ctrl</kbd><span style="color:var(--text-muted)">+</span><kbd>Alt</kbd><span style="color:var(--text-muted)">+</span><kbd>Space</kbd>';
+    }}
+    return `${{base}}<span style="color:var(--text-muted);font-size:11px;margin:0 2px">or</span><kbd>Ctrl</kbd><span style="color:var(--text-muted)">+</span><kbd>Alt</kbd><span style="color:var(--text-muted)">+</span><kbd>Space</kbd>`;
+  }}
+
   function applySnapshot(snap) {{
     if (!snap) return;
     state = snap;
@@ -1353,6 +1380,14 @@ def build_studio_html(logo_data_uri: str = "") -> str:
     document.getElementById('nav-lex-count').innerText = ruleCount;
     document.getElementById('stat-privacy').innerText = cfg.save_training_audio ? 'Opt-In Vault' : 'RAM Only';
     document.getElementById('hotkey-display').innerHTML = formatHotkey(cfg.hotkey || 'ctrl+alt');
+    const dblOn = cfg.double_tap_lock !== false;
+    const lockDisp = document.getElementById('lock-hotkey-display');
+    if (lockDisp) lockDisp.innerHTML = formatLockHotkey(cfg.hotkey || 'ctrl+alt', dblOn);
+    const shortLock = document.getElementById('shortcut-lock-display');
+    if (shortLock) {{
+      const hk = cfg.hotkey || 'ctrl+alt';
+      shortLock.innerHTML = hk === 'win+alt' ? '<kbd>Win</kbd> + <kbd>2× Alt</kbd>' : (hk === 'right_alt' ? '<kbd>2× Right Alt</kbd>' : '<kbd>Ctrl</kbd> + <kbd>2× Alt</kbd>');
+    }}
 
     // Settings population
     const micSel = document.getElementById('set-mic');
@@ -1369,6 +1404,8 @@ def build_studio_html(logo_data_uri: str = "") -> str:
 
     document.getElementById('set-model').value = model;
     updateModelButtons(snap.model_ready, snap.model_size_mb);
+    const chkDbl = document.getElementById('chk-double-tap');
+    if (chkDbl) chkDbl.checked = dblOn;
     document.getElementById('chk-hud').checked = !!cfg.hud_visible;
     document.getElementById('chk-autostart').checked = !!snap.autostart;
     document.getElementById('chk-save-audio').checked = !!cfg.save_training_audio;

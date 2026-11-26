@@ -7,6 +7,7 @@ Tests:
 4. Non-destructive clipboard preservation.
 5. Live whisper-server HTTP POST on port 8080 with JFK sample.
 6. HushFlow StudioBridge API, zero-CDN offline HTML, idle-mic privacy guard & Lexicon CRUD.
+7. Hands-Free Double-Tap Alt Lock state machine & Clickable HUD Done/Discard pill controls.
 """
 
 import os
@@ -22,11 +23,13 @@ import brand_assets
 from studio_ui import build_studio_html
 from smart_cleanup import apply_smart_cleanup
 from quick_fix import extract_word_replacements
+from desktop_hud import DesktopHUD
+import whisper_flow as wf
 import whisper_flow_studio as wfs
 
 
 def test_smart_cleanup():
-    print("[TEST 1/6] Testing Smart Speech Cleanup & Voice Commands...")
+    print("[TEST 1/7] Testing Smart Speech Cleanup & Voice Commands...")
 
     t1 = "read the entire setup and project out of 10 emails in every criterion."
     c1 = apply_smart_cleanup(t1)
@@ -52,7 +55,7 @@ def test_smart_cleanup():
 
 
 def test_in_memory_wav_encoding():
-    print("[TEST 2/6] Testing In-Memory RAM WAV Encoding vs Disk I/O...")
+    print("[TEST 2/7] Testing In-Memory RAM WAV Encoding vs Disk I/O...")
     audio_data = np.random.uniform(-0.5, 0.5, 16000 * 5).astype(np.float32)
 
     t0 = time.perf_counter()
@@ -85,7 +88,7 @@ def test_in_memory_wav_encoding():
 
 
 def test_quick_fix_diff():
-    print("[TEST 3/6] Testing QuickFix Diff Extraction...")
+    print("[TEST 3/7] Testing QuickFix Diff Extraction...")
     orig = "What is the jurisdiction style in this model"
     corr = "What is the dictation style in this model"
     replacements = extract_word_replacements(orig, corr)
@@ -94,7 +97,7 @@ def test_quick_fix_diff():
 
 
 def test_clipboard_preservation():
-    print("[TEST 4/6] Testing Clipboard Preservation Logic...")
+    print("[TEST 4/7] Testing Clipboard Preservation Logic...")
     original_clipboard = "user_original_secret_token_12345"
     pyperclip.copy(original_clipboard)
     saved = pyperclip.paste()
@@ -109,7 +112,7 @@ def test_clipboard_preservation():
 
 
 def test_live_server_inference():
-    print("[TEST 5/6] Testing Live whisper-server HTTP POST on port 8080...")
+    print("[TEST 5/7] Testing Live whisper-server HTTP POST on port 8080...")
     from whisper_flow import ensure_whisper_server
     assert ensure_whisper_server(), "whisper-server failed to become healthy"
 
@@ -138,7 +141,7 @@ def test_live_server_inference():
 
 
 def test_hushflow_studio_and_assets():
-    print("[TEST 6/6] Testing HushFlow StudioBridge, Offline UI, Brand Assets & Lexicon...")
+    print("[TEST 6/7] Testing HushFlow StudioBridge, Offline UI, Brand Assets & Lexicon...")
     assert os.path.exists(brand_assets.get_app_icon_path())
     assert os.path.exists(brand_assets.get_app_logo_path())
     assert brand_assets.render_tray_icon("idle", size=64).size == (64, 64)
@@ -182,6 +185,88 @@ def test_hushflow_studio_and_assets():
     print("  [PASS] HushFlow Offline UI, StudioBridge, Idle-Mic Guard & Lexicon passed 100%.\n")
 
 
+def test_double_tap_lock_and_hud_pill():
+    print("[TEST 7/7] Testing Double-Tap Alt Lock State Machine & Clickable HUD Pill...")
+    cfg_on = {"double_tap_lock": True, "hands_free_toggle_enabled": True}
+    cfg_no_dbl = {"double_tap_lock": False, "hands_free_toggle_enabled": True}
+
+    # Case 1: Normal Push-to-Talk hold > 0.4s -> grace release -> transcribe
+    c = wf.HotkeyStateController()
+    assert c.step(0.00, True, False, False, cfg_on) == "start_ptt"
+    assert c.step(1.20, True, False, False, cfg_on) == "none"
+    assert c.step(1.25, False, False, False, cfg_on) == "none"
+    assert c.step(1.75, False, False, False, cfg_on) == "transcribe"
+    assert c.mode == "idle"
+
+    # Case 2: Ctrl + Double-Tap Alt (tap1 <= 0.38s, gap <= 0.52s) -> upgrade_to_locked & stay listening after release
+    c = wf.HotkeyStateController()
+    assert c.step(0.00, True, False, False, cfg_on) == "start_ptt"
+    assert c.step(0.12, False, False, False, cfg_on) == "none"
+    assert c.step(0.24, True, False, False, cfg_on) == "upgrade_to_locked"
+    assert c.mode == "locked"
+    assert c.step(0.36, False, False, False, cfg_on) == "none"  # user lifts both hands
+    assert c.step(45.0, False, False, False, cfg_on) == "none"  # stays locked indefinitely for paragraphs
+    assert c.step(90.0, False, False, False, cfg_on, pill_action="finish") == "transcribe"
+    assert c.mode == "idle"
+
+    # Case 3: Boundary double-tap slightly slower than 0.45s grace still locks on tap2 (0.49s gap <= 0.52s)
+    c = wf.HotkeyStateController()
+    assert c.step(0.00, True, False, False, cfg_on) == "start_ptt"
+    assert c.step(0.10, False, False, False, cfg_on) == "none"
+    assert c.step(0.56, False, False, False, cfg_on) == "transcribe"  # grace expired
+    assert c.step(0.59, True, False, False, cfg_on) == "start_locked"  # locked immediately on tap2
+    assert c.step(0.70, False, False, False, cfg_on) == "none"
+    assert c.step(3.00, False, False, False, cfg_on, pill_action="cancel") == "cancel"
+    assert c.mode == "idle"
+
+    # Case 4: Chord timing race safety: Ctrl+Alt 30ms before Space upgrades cleanly to locked
+    c = wf.HotkeyStateController()
+    assert c.step(0.00, True, False, False, cfg_on) == "start_ptt"
+    assert c.step(0.03, True, True, False, cfg_on) == "upgrade_to_locked"
+    assert c.step(0.18, False, False, False, cfg_on) == "none"
+    assert c.step(1.00, True, False, False, cfg_on) == "transcribe"  # single hotkey tap stops locked cleanly
+    assert c.step(1.05, True, False, False, cfg_on) == "none"  # no phantom re-trigger while held
+    assert c.step(1.10, False, False, False, cfg_on) == "none"
+
+    # Case 5: double_tap_lock = False keeps double-tap as plain PTT
+    c = wf.HotkeyStateController()
+    assert c.step(0.00, True, False, False, cfg_no_dbl) == "start_ptt"
+    assert c.step(0.10, False, False, False, cfg_no_dbl) == "none"
+    assert c.step(0.22, True, False, False, cfg_no_dbl) == "none"
+    assert c.mode == "ptt"
+
+    # Case 6: Max 900s safety auto-transcribe in locked mode
+    c = wf.HotkeyStateController()
+    assert c.step(0.00, False, True, False, cfg_on) == "start_locked"
+    assert c.step(0.10, False, False, False, cfg_on) == "none"
+    assert c.step(900.1, False, False, False, cfg_on) == "transcribe"
+
+    # Case 7: Clickable HUD Done & Discard buttons + hit-testing + 3x locked preview render
+    events = []
+    hud = DesktopHUD(visible=False, on_finish=lambda: events.append("finish"), on_cancel=lambda: events.append("cancel"))
+    try:
+        hud.set_state("recording", locked=True)
+        img_locked = hud.render_preview_image(use_target_width=True)
+        assert img_locked.size == (hud.locked_w, hud.h)
+        assert hud._btn_finish_rect is not None and hud._btn_cancel_rect is not None
+        fx = (hud._btn_finish_rect[0] + hud._btn_finish_rect[2]) // 2
+        fy = (hud._btn_finish_rect[1] + hud._btn_finish_rect[3]) // 2
+        cx = (hud._btn_cancel_rect[0] + hud._btn_cancel_rect[2]) // 2
+        cy = (hud._btn_cancel_rect[1] + hud._btn_cancel_rect[3]) // 2
+        assert hud._hit_test_button(fx, fy) == "finish"
+        assert hud._hit_test_button(cx, cy) == "cancel"
+        assert hud._hit_test_button(12, 20) is None  # drag handle zone
+    finally:
+        hud.close()
+
+    # Case 8: Studio HTML exposes double-tap toggle cleanly
+    html = build_studio_html(wfs._load_logo_data_uri())
+    assert "chk-double-tap" in html and "Double-Tap Alt Lock" in html
+    assert "lock-hotkey-display" in html
+
+    print("  [PASS] Double-Tap Lock, Long Dictation State Machine & HUD Pill Controls passed 100%.\n")
+
+
 if __name__ == "__main__":
     print("==================================================")
     print("  HushFlow Production Verification Suite")
@@ -192,6 +277,7 @@ if __name__ == "__main__":
     test_clipboard_preservation()
     test_live_server_inference()
     test_hushflow_studio_and_assets()
+    test_double_tap_lock_and_hud_pill()
     print("==================================================")
-    print("  ALL 6 CRITICAL TEST SUITES PASSED (100% GREEN)")
+    print("  ALL 7 CRITICAL TEST SUITES PASSED (100% GREEN)")
     print("==================================================")
