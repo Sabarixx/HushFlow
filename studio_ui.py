@@ -24,22 +24,35 @@ def build_studio_html(logo_data_uri: str = "") -> str:
 <title>HushFlow</title>
 <style>
   :root {{
-    --bg-app: #080a0f;
-    --bg-sidebar: #0b0e15;
-    --bg-card: #0f131c;
-    --bg-inset: #141925;
-    --bg-hover: #181e2c;
-    --border-hair: rgba(255, 255, 255, 0.07);
-    --border-strong: rgba(255, 255, 255, 0.13);
-    --text-primary: #f8fafc;
-    --text-secondary: #94a3b8;
-    --text-muted: #64748b;
-    --accent-mint: #34d399;
-    --accent-mint-dim: rgba(52, 211, 153, 0.12);
-    --accent-sky: #38bdf8;
-    --accent-coral: #f87171;
-    --accent-coral-bg: rgba(239, 68, 68, 0.11);
-    --accent-amber: #fbbf24;
+    --bg-app: #131722;
+    --bg-sidebar: #0F131C;
+    --bg-card: #191F2E;
+    --bg-inset: #101521;
+    --bg-hover: #22293B;
+    --border-hair: #273044;
+    --border-strong: #34405A;
+    --text-primary: #EDF1F7;
+    --text-secondary: #9AA6BA;
+    --text-muted: #6E7B91;
+    --accent-copper: #D96B43;
+    --accent-copper-hover: #C55A34;
+    --accent-copper-dim: rgba(217, 107, 67, 0.14);
+    --accent-mint: #3A9D74;
+    --accent-mint-txt: #6CC49D;
+    --accent-mint-dim: rgba(58, 157, 116, 0.15);
+    --accent-sky: #5682D4;
+    --accent-sky-txt: #82A6EB;
+    --accent-sky-dim: rgba(86, 130, 212, 0.14);
+    --accent-ochre: #CFA04A;
+    --accent-ochre-txt: #E4BC6E;
+    --accent-ochre-dim: rgba(207, 160, 74, 0.14);
+    --accent-teal: #4A98B0;
+    --accent-teal-txt: #78BDD1;
+    --accent-teal-dim: rgba(74, 152, 176, 0.14);
+    --accent-coral: #C85353;
+    --accent-coral-txt: #EFA2A2;
+    --accent-coral-bg: rgba(200, 83, 83, 0.14);
+    --accent-amber: #CFA04A;
     --font-ui: "Segoe UI Variable Text", "Segoe UI", -apple-system, BlinkMacSystemFont, sans-serif;
     --font-display: "Segoe UI Variable Display", "Segoe UI", sans-serif;
     --font-mono: "Cascadia Mono", "Consolas", monospace;
@@ -90,7 +103,8 @@ def build_studio_html(logo_data_uri: str = "") -> str:
     height: 34px;
     border-radius: 9px;
     display: block;
-    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.45);
+    outline: 1px solid rgba(255, 255, 255, 0.08);
+    outline-offset: -1px;
   }}
 
   .brand-title {{
@@ -129,6 +143,7 @@ def build_studio_html(logo_data_uri: str = "") -> str:
   }}
 
   .nav-item {{
+    position: relative;
     display: flex;
     align-items: center;
     gap: 10px;
@@ -141,21 +156,32 @@ def build_studio_html(logo_data_uri: str = "") -> str:
     font-size: 13px;
     font-weight: 500;
     cursor: pointer;
-    transition: all 0.16s var(--ease-out);
+    transition: background-color 0.16s var(--ease-out), border-color 0.16s var(--ease-out), color 0.16s var(--ease-out);
     text-align: left;
     width: 100%;
   }}
 
   .nav-item:hover {{
-    background: rgba(255, 255, 255, 0.035);
+    background: rgba(255, 255, 255, 0.04);
     color: var(--text-primary);
   }}
 
   .nav-item.active {{
-    background: var(--bg-inset);
+    background: #181F30;
     border-color: var(--border-hair);
     color: var(--text-primary);
     font-weight: 600;
+  }}
+
+  .nav-item.active::before {{
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 7px;
+    bottom: 7px;
+    width: 3px;
+    border-radius: 0 3px 3px 0;
+    background: var(--accent-copper);
   }}
 
   .nav-item svg {{
@@ -167,15 +193,17 @@ def build_studio_html(logo_data_uri: str = "") -> str:
 
   .nav-item.active svg {{
     opacity: 1;
-    color: var(--accent-mint);
+    color: var(--accent-copper);
   }}
 
   .nav-badge {{
     margin-left: auto;
     font-family: var(--font-mono);
     font-size: 10px;
-    color: var(--text-muted);
-    background: rgba(255, 255, 255, 0.05);
+    font-variant-numeric: tabular-nums;
+    color: var(--accent-mint-txt);
+    background: var(--accent-mint-dim);
+    border: 1px solid rgba(58, 157, 116, 0.25);
     padding: 1px 6px;
     border-radius: 99px;
   }}
@@ -202,19 +230,19 @@ def build_studio_html(logo_data_uri: str = "") -> str:
     width: 8px;
     height: 8px;
     border-radius: 50%;
-    background: var(--text-muted);
-    transition: all 0.25s ease;
+    background: var(--accent-copper);
+    transition: background-color 0.2s ease;
     flex-shrink: 0;
   }}
 
   .status-dot.online {{
     background: var(--accent-mint);
-    box-shadow: 0 0 0 3px rgba(52, 211, 153, 0.18);
+    outline: 2px solid rgba(58, 157, 116, 0.28);
   }}
 
   .status-dot.busy {{
     background: var(--accent-amber);
-    box-shadow: 0 0 0 3px rgba(251, 191, 36, 0.18);
+    outline: 2px solid rgba(207, 160, 74, 0.28);
   }}
 
   .dock-status-label {{
@@ -227,6 +255,7 @@ def build_studio_html(logo_data_uri: str = "") -> str:
     font-size: 10.5px;
     color: var(--text-muted);
     font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
   }}
 
   .dock-btn {{
@@ -238,25 +267,25 @@ def build_studio_html(logo_data_uri: str = "") -> str:
     font-size: 12px;
     font-weight: 600;
     cursor: pointer;
-    transition: transform 0.12s ease, background 0.15s ease;
+    transition: transform 0.12s ease, background-color 0.15s ease;
   }}
 
   .dock-btn:active {{ transform: scale(0.98); }}
 
   .dock-btn.start {{
-    background: #f8fafc;
-    color: #080a0f;
+    background: var(--accent-copper);
+    color: #FFFFFF;
   }}
 
-  .dock-btn.start:hover {{ background: #e2e8f0; }}
+  .dock-btn.start:hover {{ background: var(--accent-copper-hover); }}
 
   .dock-btn.stop {{
     background: var(--accent-coral-bg);
-    color: #fca5a5;
-    border: 1px solid rgba(239, 68, 68, 0.28);
+    color: var(--accent-coral-txt);
+    border: 1px solid rgba(200, 83, 83, 0.35);
   }}
 
-  .dock-btn.stop:hover {{ background: rgba(239, 68, 68, 0.18); }}
+  .dock-btn.stop:hover {{ background: rgba(200, 83, 83, 0.22); }}
 
   .dock-btn:disabled {{
     opacity: 0.55;
@@ -334,6 +363,7 @@ def build_studio_html(logo_data_uri: str = "") -> str:
     font-weight: 700;
     letter-spacing: -0.025em;
     color: var(--text-primary);
+    text-wrap: balance;
   }}
 
   .page-sub {{
@@ -342,13 +372,14 @@ def build_studio_html(logo_data_uri: str = "") -> str:
     margin-top: 3px;
   }}
 
-  /* Hero Card */
+  /* Hero Card (matte architectural border accent, zero glowing gradients) */
   .hero-card {{
     position: relative;
     background: var(--bg-card);
     border: 1px solid var(--border-hair);
+    border-left: 3px solid var(--accent-copper);
     box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
-    border-radius: 16px;
+    border-radius: 14px;
     padding: 18px 22px;
     display: flex;
     align-items: center;
@@ -358,12 +389,8 @@ def build_studio_html(logo_data_uri: str = "") -> str:
     overflow: hidden;
   }}
 
-  .hero-card.online::before {{
-    content: "";
-    position: absolute;
-    inset: 0;
-    background: radial-gradient(circle at 85% 20%, rgba(52, 211, 153, 0.09), transparent 55%);
-    pointer-events: none;
+  .hero-card.online {{
+    border-left-color: var(--accent-mint);
   }}
 
   .hero-left {{ position: relative; z-index: 1; }}
@@ -376,16 +403,16 @@ def build_studio_html(logo_data_uri: str = "") -> str:
     font-weight: 600;
     padding: 4px 10px;
     border-radius: 99px;
-    background: rgba(255,255,255,0.04);
-    border: 1px solid var(--border-hair);
-    color: var(--text-secondary);
+    background: var(--accent-copper-dim);
+    border: 1px solid rgba(217, 107, 67, 0.28);
+    color: #F0B199;
     margin-bottom: 10px;
   }}
 
   .hero-badge.online {{
     background: var(--accent-mint-dim);
-    border-color: rgba(52, 211, 153, 0.25);
-    color: var(--accent-mint);
+    border-color: rgba(58, 157, 116, 0.32);
+    color: var(--accent-mint-txt);
   }}
 
   .hero-h2 {{
@@ -393,6 +420,7 @@ def build_studio_html(logo_data_uri: str = "") -> str:
     font-size: 17px;
     font-weight: 600;
     letter-spacing: -0.015em;
+    text-wrap: balance;
   }}
 
   .hero-p {{
@@ -402,8 +430,8 @@ def build_studio_html(logo_data_uri: str = "") -> str:
   }}
 
   .btn-primary {{
-    background: #f8fafc;
-    color: #080a0f;
+    background: var(--accent-copper);
+    color: #FFFFFF;
     border: none;
     height: 36px;
     padding: 0 18px;
@@ -412,20 +440,20 @@ def build_studio_html(logo_data_uri: str = "") -> str:
     font-size: 12.5px;
     font-weight: 600;
     cursor: pointer;
-    transition: transform 0.12s ease, background 0.15s ease;
+    transition: transform 0.12s ease, background-color 0.15s ease;
     white-space: nowrap;
     position: relative;
     z-index: 1;
   }}
 
-  .btn-primary:hover {{ background: #e2e8f0; }}
+  .btn-primary:hover {{ background: var(--accent-copper-hover); }}
   .btn-primary:active {{ transform: scale(0.98); }}
   .btn-primary:disabled {{ opacity: 0.55; cursor: wait; }}
 
   .btn-danger {{
     background: var(--accent-coral-bg);
-    color: #fca5a5;
-    border: 1px solid rgba(239, 68, 68, 0.28);
+    color: var(--accent-coral-txt);
+    border: 1px solid rgba(200, 83, 83, 0.35);
     height: 36px;
     padding: 0 18px;
     border-radius: 9px;
@@ -433,13 +461,13 @@ def build_studio_html(logo_data_uri: str = "") -> str:
     font-size: 12.5px;
     font-weight: 600;
     cursor: pointer;
-    transition: transform 0.12s ease, background 0.15s ease;
+    transition: transform 0.12s ease, background-color 0.15s ease;
     white-space: nowrap;
     position: relative;
     z-index: 1;
   }}
 
-  .btn-danger:hover {{ background: rgba(239, 68, 68, 0.18); }}
+  .btn-danger:hover {{ background: rgba(200, 83, 83, 0.22); }}
 
   .btn-secondary {{
     background: var(--bg-inset);
@@ -473,19 +501,43 @@ def build_studio_html(logo_data_uri: str = "") -> str:
     background: var(--bg-card);
     border: 1px solid var(--border-hair);
     border-radius: 13px;
-    padding: 14px 16px;
+    padding: 13px 15px;
+  }}
+
+  .metric-top {{
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 6px;
   }}
 
   .metric-k {{
     font-size: 11px;
-    color: var(--text-muted);
-    margin-bottom: 5px;
+    color: var(--text-secondary);
+    font-weight: 500;
   }}
+
+  .metric-chip {{
+    width: 22px;
+    height: 22px;
+    border-radius: 6px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+  }}
+  .metric-chip svg {{ width: 13px; height: 13px; }}
+  .metric-chip.cobalt {{ background: var(--accent-sky-dim); color: var(--accent-sky-txt); }}
+  .metric-chip.ochre {{ background: var(--accent-ochre-dim); color: var(--accent-ochre-txt); }}
+  .metric-chip.sage {{ background: var(--accent-mint-dim); color: var(--accent-mint-txt); }}
+  .metric-chip.teal {{ background: var(--accent-teal-dim); color: var(--accent-teal-txt); }}
 
   .metric-v {{
     font-family: var(--font-display);
     font-size: 14.5px;
     font-weight: 600;
+    font-variant-numeric: tabular-nums;
     color: var(--text-primary);
     white-space: nowrap;
     overflow: hidden;
@@ -572,18 +624,18 @@ def build_studio_html(logo_data_uri: str = "") -> str:
     flex: 1;
     height: 10px;
     border-radius: 3px;
-    background: rgba(255, 255, 255, 0.06);
-    transition: background 0.08s ease, height 0.08s ease;
+    background: #1E2538;
+    transition: background-color 0.08s ease, height 0.08s ease;
   }}
 
   .vu-seg.on {{ background: var(--accent-mint); height: 13px; }}
-  .vu-seg.hot {{ background: var(--accent-sky); height: 14px; }}
+  .vu-seg.hot {{ background: var(--accent-copper); height: 14px; }}
 
   /* Compact Practice & Feed */
   .practice-input {{
     width: 100%;
     height: 76px;
-    background: #080a0f;
+    background: var(--bg-inset);
     border: 1px solid var(--border-hair);
     border-radius: 10px;
     padding: 11px 13px;
@@ -598,7 +650,7 @@ def build_studio_html(logo_data_uri: str = "") -> str:
   }}
 
   .practice-input:focus {{
-    border-color: rgba(56, 189, 248, 0.45);
+    border-color: var(--accent-sky);
   }}
 
   .feed-list {{
@@ -637,7 +689,7 @@ def build_studio_html(logo_data_uri: str = "") -> str:
 
   /* Inputs & Form Controls */
   .input-field, .select-field {{
-    background: #080a0f;
+    background: var(--bg-inset);
     border: 1px solid var(--border-strong);
     border-radius: 8px;
     color: var(--text-primary);
@@ -650,7 +702,7 @@ def build_studio_html(logo_data_uri: str = "") -> str:
   }}
 
   .input-field:focus, .select-field:focus {{
-    border-color: rgba(56, 189, 248, 0.5);
+    border-color: var(--accent-sky);
   }}
 
   .lex-form {{
@@ -690,7 +742,7 @@ def build_studio_html(logo_data_uri: str = "") -> str:
     font-size: 12px;
     padding: 2px 8px;
     border-radius: 6px;
-    background: #0b0e15;
+    background: var(--bg-sidebar);
     border: 1px solid var(--border-hair);
     color: var(--text-secondary);
   }}
@@ -702,8 +754,8 @@ def build_studio_html(logo_data_uri: str = "") -> str:
     padding: 2px 8px;
     border-radius: 6px;
     background: var(--accent-mint-dim);
-    border: 1px solid rgba(52, 211, 153, 0.25);
-    color: var(--accent-mint);
+    border: 1px solid rgba(58, 157, 116, 0.3);
+    color: var(--accent-mint-txt);
   }}
 
   /* Settings List */
@@ -740,7 +792,7 @@ def build_studio_html(logo_data_uri: str = "") -> str:
 
   .segmented {{
     display: inline-flex;
-    background: #080a0f;
+    background: var(--bg-inset);
     border: 1px solid var(--border-hair);
     border-radius: 8px;
     padding: 3px;
@@ -749,7 +801,7 @@ def build_studio_html(logo_data_uri: str = "") -> str:
 
   .seg-btn {{
     background: transparent;
-    border: none;
+    border: 1px solid transparent;
     color: var(--text-secondary);
     font-family: var(--font-ui);
     font-size: 11.5px;
@@ -757,14 +809,14 @@ def build_studio_html(logo_data_uri: str = "") -> str:
     padding: 5px 11px;
     border-radius: 6px;
     cursor: pointer;
-    transition: all 0.15s ease;
+    transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease;
   }}
 
   .seg-btn.active {{
-    background: var(--bg-inset);
-    color: var(--text-primary);
+    background: var(--accent-sky-dim);
+    border-color: rgba(86, 130, 212, 0.34);
+    color: var(--accent-sky-txt);
     font-weight: 600;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
   }}
 
   /* Switch */
@@ -780,10 +832,10 @@ def build_studio_html(logo_data_uri: str = "") -> str:
   .slider {{
     position: absolute;
     inset: 0;
-    background: #1c2233;
+    background: #252E44;
     border-radius: 99px;
     cursor: pointer;
-    transition: 0.2s var(--ease-out);
+    transition: background-color 0.2s var(--ease-out);
   }}
 
   .slider::before {{
@@ -793,15 +845,15 @@ def build_studio_html(logo_data_uri: str = "") -> str:
     width: 16px;
     left: 3px;
     top: 3px;
-    background: #cbd5e1;
+    background: #CBD5E1;
     border-radius: 50%;
-    transition: 0.2s var(--ease-out);
+    transition: transform 0.2s var(--ease-out), background-color 0.2s var(--ease-out);
   }}
 
   .switch input:checked + .slider {{ background: var(--accent-mint); }}
   .switch input:checked + .slider::before {{
     transform: translateX(16px);
-    background: #06281b;
+    background: #FFFFFF;
   }}
 
   /* Progress Bar */
@@ -809,7 +861,7 @@ def build_studio_html(logo_data_uri: str = "") -> str:
     width: 100%;
     height: 6px;
     border-radius: 99px;
-    background: #080a0f;
+    background: var(--bg-inset);
     overflow: hidden;
     margin-top: 8px;
   }}
@@ -838,7 +890,7 @@ def build_studio_html(logo_data_uri: str = "") -> str:
   .cmd-say {{
     font-family: var(--font-mono);
     font-size: 12px;
-    color: var(--accent-sky);
+    color: var(--accent-ochre-txt);
     font-weight: 600;
   }}
 
@@ -852,8 +904,7 @@ def build_studio_html(logo_data_uri: str = "") -> str:
   .modal-backdrop {{
     position: fixed;
     inset: 0;
-    background: rgba(5, 7, 11, 0.84);
-    backdrop-filter: blur(10px);
+    background: rgba(11, 14, 22, 0.84);
     display: none;
     align-items: center;
     justify-content: center;
@@ -986,22 +1037,34 @@ def build_studio_html(logo_data_uri: str = "") -> str:
 
         <div class="metrics-grid">
           <div class="metric-card">
-            <div class="metric-k">Speech Model</div>
+            <div class="metric-top">
+              <div class="metric-k">Speech Model</div>
+              <span class="metric-chip cobalt"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/></svg></span>
+            </div>
             <div class="metric-v" id="stat-model">small.en-q5_1</div>
             <div class="metric-s" id="stat-ram-foot">~190 MB GGML</div>
           </div>
           <div class="metric-card">
-            <div class="metric-k">CPU Allocation</div>
+            <div class="metric-top">
+              <div class="metric-k">CPU Allocation</div>
+              <span class="metric-chip ochre"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><path d="M9 1v3M15 1v3M9 20v3M15 20v3M20 9h3M20 14h3M1 9h3M1 14h3"/></svg></span>
+            </div>
             <div class="metric-v" id="stat-threads">Auto Threads</div>
             <div class="metric-s">100% Local Inference</div>
           </div>
           <div class="metric-card">
-            <div class="metric-k">Custom Dictionary</div>
+            <div class="metric-top">
+              <div class="metric-k">Custom Dictionary</div>
+              <span class="metric-chip sage"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg></span>
+            </div>
             <div class="metric-v" id="stat-lex">0 Rules</div>
             <div class="metric-s" id="stat-vocab">0 Vocab Terms</div>
           </div>
           <div class="metric-card">
-            <div class="metric-k">Audio Privacy</div>
+            <div class="metric-top">
+              <div class="metric-k">Audio Privacy</div>
+              <span class="metric-chip teal"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg></span>
+            </div>
             <div class="metric-v" id="stat-privacy">RAM Only</div>
             <div class="metric-s">Zero Cloud Telemetry</div>
           </div>
@@ -1015,8 +1078,8 @@ def build_studio_html(logo_data_uri: str = "") -> str:
           </div>
           <div class="card" style="margin-bottom:0">
             <div class="card-title">Hands-Free Lock</div>
-            <div class="kbd-row" id="lock-hotkey-display"><kbd>Ctrl</kbd><span style="color:var(--text-muted)">+</span><kbd>2× Alt</kbd><span style="color:var(--text-muted);font-size:11px;margin:0 2px">or</span><kbd>Ctrl</kbd><span style="color:var(--text-muted)">+</span><kbd>Alt</kbd><span style="color:var(--text-muted)">+</span><kbd>Space</kbd></div>
-            <div class="card-sub">Double-tap to lock long listening; click <strong style="color:var(--accent-mint)">✓ Done</strong> or <strong style="color:var(--text-primary)">× Discard</strong> on the left pill.</div>
+            <div class="kbd-row" id="lock-hotkey-display"><kbd>Ctrl</kbd><span style="color:var(--text-muted)">+</span><kbd>2× Alt</kbd></div>
+            <div class="card-sub">Lock continuous speech (or Ctrl+Alt+Space); click <strong style="color:var(--accent-mint-txt)">✓ Done</strong> or <strong style="color:var(--text-primary)">× Discard</strong> on the left pill.</div>
           </div>
         </div>
 
@@ -1213,7 +1276,7 @@ def build_studio_html(logo_data_uri: str = "") -> str:
           </div>
           <div class="setting-row">
             <div><div class="setting-title">Floating Pill Controls (While Locked)</div><div class="setting-desc">Click Done (✓) on the left pill to transcribe &amp; paste, or Discard (×) to cancel</div></div>
-            <div><kbd style="color:var(--accent-mint);border-color:rgba(52,211,153,0.4)">✓ Done</kbd> <kbd>× Discard</kbd></div>
+            <div><kbd style="background:var(--accent-mint-dim);color:var(--accent-mint-txt);border-color:rgba(58,157,116,0.38)">✓ Done</kbd> <kbd>× Discard</kbd></div>
           </div>
           <div class="setting-row">
             <div><div class="setting-title">QuickFix Lexicon Learn</div><div class="setting-desc">Correct the last dictated phrase & teach HushFlow</div></div>
@@ -1256,7 +1319,7 @@ def build_studio_html(logo_data_uri: str = "") -> str:
     <div class="onboard-step">
       <div class="onboard-step-t">
         <span>1. Local-Only Privacy Guarantee</span>
-        <span style="color:var(--accent-mint);font-size:11px">100% Air-Gapped</span>
+        <span style="color:var(--accent-mint-txt);font-size:11px;font-weight:600">100% Air-Gapped</span>
       </div>
       <div class="onboard-step-p">Speech audio stays purely in local RAM via loopback whisper-server (127.0.0.1). No telemetry, accounts, or background microphone capture when idle.</div>
     </div>
@@ -1312,13 +1375,12 @@ def build_studio_html(logo_data_uri: str = "") -> str:
   }}
 
   function formatLockHotkey(hk, doubleTapOn) {{
-    let base = '<kbd>Ctrl</kbd><span style="color:var(--text-muted)">+</span><kbd>2× Alt</kbd>';
-    if (hk === 'win+alt') base = '<kbd>Win</kbd><span style="color:var(--text-muted)">+</span><kbd>2× Alt</kbd>';
-    else if (hk === 'right_alt') base = '<kbd>2× Right Alt</kbd>';
     if (!doubleTapOn) {{
       return '<kbd>Ctrl</kbd><span style="color:var(--text-muted)">+</span><kbd>Alt</kbd><span style="color:var(--text-muted)">+</span><kbd>Space</kbd>';
     }}
-    return `${{base}}<span style="color:var(--text-muted);font-size:11px;margin:0 2px">or</span><kbd>Ctrl</kbd><span style="color:var(--text-muted)">+</span><kbd>Alt</kbd><span style="color:var(--text-muted)">+</span><kbd>Space</kbd>`;
+    if (hk === 'win+alt') return '<kbd>Win</kbd><span style="color:var(--text-muted)">+</span><kbd>2× Alt</kbd>';
+    if (hk === 'right_alt') return '<kbd>2× Right Alt</kbd>';
+    return '<kbd>Ctrl</kbd><span style="color:var(--text-muted)">+</span><kbd>2× Alt</kbd>';
   }}
 
   function applySnapshot(snap) {{

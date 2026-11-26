@@ -430,17 +430,17 @@ class DesktopHUD:
                 width=s,
             )
 
-        # Smooth executive dark obsidian pill with subtle slate hairline border
+        # Smooth editorial dark slate pill with muted hairline border
         pad = 2 * s
-        bg_color = (16, 20, 30, 248)
+        bg_color = (21, 27, 40, 250)
         if self.state == "recording":
-            border_color = (239, 68, 68, 220)
+            border_color = (200, 83, 83, 225)
         elif self.state == "transcribing":
-            border_color = (245, 158, 11, 210)
+            border_color = (207, 160, 74, 220)
         elif self.state == "done":
-            border_color = (52, 211, 153, 220)
+            border_color = (58, 157, 116, 225)
         else:
-            border_color = (44, 54, 78, 235)
+            border_color = (52, 64, 90, 238)
 
         d.rounded_rectangle((pad, pad, sw - pad, sh - pad), radius=18 * s, fill=bg_color, outline=border_color, width=s)
 
@@ -452,42 +452,42 @@ class DesktopHUD:
             glow_alpha = int(110 + 70 * math.sin(self.anim_tick * 0.16))
             d.ellipse(
                 (cx - pulse_rad, cy - pulse_rad, cx + pulse_rad, cy + pulse_rad),
-                outline=(239, 68, 68, glow_alpha),
+                outline=(200, 83, 83, glow_alpha),
                 width=int(1.8 * s),
             )
             r_dot = 4.5 * s
-            d.ellipse((cx - r_dot, cy - r_dot, cx + r_dot, cy + r_dot), fill=(239, 68, 68, 255))
+            d.ellipse((cx - r_dot, cy - r_dot, cx + r_dot, cy + r_dot), fill=(214, 79, 79, 255))
 
         elif self.state == "transcribing":
             r_ring = 9.5 * s
-            d.ellipse((cx - r_ring, cy - r_ring, cx + r_ring, cy + r_ring), outline=(60, 48, 24, 210), width=int(1.8 * s))
+            d.ellipse((cx - r_ring, cy - r_ring, cx + r_ring, cy + r_ring), outline=(64, 52, 29, 215), width=int(1.8 * s))
             spin_rad = self.anim_tick * 0.18
             for dot_i in range(3):
                 da = spin_rad + dot_i * 0.48
                 dx = cx + 7.5 * s * math.cos(da)
                 dy = cy + 7.5 * s * math.sin(da)
                 dr = 2.0 * s
-                d.ellipse((dx - dr, dy - dr, dx + dr, dy + dr), fill=(245, 158, 11, 255 - dot_i * 65))
+                d.ellipse((dx - dr, dy - dr, dx + dr, dy + dr), fill=(207, 160, 74, 255 - dot_i * 65))
 
         elif self.state == "done":
             r_ok = 9.5 * s
-            d.ellipse((cx - r_ok, cy - r_ok, cx + r_ok, cy + r_ok), fill=(16, 185, 129, 255))
+            d.ellipse((cx - r_ok, cy - r_ok, cx + r_ok, cy + r_ok), fill=(58, 157, 116, 255))
             d.line(
                 (cx - 4 * s, cy, cx - 1 * s, cy + 3 * s),
-                fill=(10, 14, 20, 255),
+                fill=(242, 246, 250, 255),
                 width=int(2.2 * s),
             )
             d.line(
                 (cx - 1 * s, cy + 3 * s, cx + 4.5 * s, cy - 3.5 * s),
-                fill=(10, 14, 20, 255),
+                fill=(242, 246, 250, 255),
                 width=int(2.2 * s),
             )
 
         else:
             self._draw_mini_wave_emblem(
                 d, cx, cy, s,
-                color_main=(241, 245, 249, 255),
-                color_accent=(52, 211, 153, 255),
+                color_main=(237, 241, 247, 255),
+                color_accent=(217, 107, 67, 255),
             )
 
         if not (self.state == "recording" and self.is_locked):
@@ -500,13 +500,13 @@ class DesktopHUD:
                 elapsed = max(0, int(time.time() - self.recording_start_time)) if self.recording_start_time else 0
                 if self._hover_btn == "finish":
                     label = "Transcribe"
-                    label_col = (110, 231, 183, 255)
+                    label_col = (108, 196, 157, 255)
                 elif self._hover_btn == "cancel":
                     label = "Discard"
-                    label_col = (252, 165, 165, 255)
+                    label_col = (239, 162, 162, 255)
                 else:
                     label = f"Locked {elapsed // 60}:{elapsed % 60:02d}"
-                    label_col = (248, 250, 252, 255)
+                    label_col = (237, 241, 247, 255)
 
                 d.text((text_x, 12 * s), label, fill=label_col, font=self.font_main)
 
@@ -520,31 +520,31 @@ class DesktopHUD:
                     d.rounded_rectangle(
                         (bx, cy - bar_h, bx + 3.0 * s, cy + bar_h),
                         radius=int(1.5 * s),
-                        fill=(239, 68, 68, 245),
+                        fill=(214, 79, 79, 245),
                     )
 
-                # Action Button 1: Done / Transcribe (checkmark circle)
+                # Action Button 1: Done / Transcribe (matte sage checkmark circle)
                 btn_d = 26
                 fy0 = (h - btn_d) // 2
                 fx0 = w - 68
                 fx1 = fx0 + btn_d
                 self._btn_finish_rect = (fx0 - 2, 4, fx1 + 1, h - 4)
                 f_hot = self._hover_btn == "finish"
-                f_fill = (16, 185, 129, 255 if f_hot else 218)
-                f_out = (110, 231, 183, 255) if f_hot else (52, 211, 153, 245)
+                f_fill = (58, 157, 116, 255 if f_hot else 225)
+                f_out = (108, 196, 157, 255) if f_hot else (76, 178, 134, 245)
                 d.ellipse((fx0 * s, fy0 * s, fx1 * s, (fy0 + btn_d) * s), fill=f_fill, outline=f_out, width=s)
                 fcx, fcy = (fx0 + btn_d / 2.0) * s, cy
-                d.line((fcx - 4.8 * s, fcy + 0.3 * s, fcx - 1.2 * s, fcy + 3.8 * s), fill=(8, 12, 18, 255), width=int(2.2 * s))
-                d.line((fcx - 1.2 * s, fcy + 3.8 * s, fcx + 5.2 * s, fcy - 3.6 * s), fill=(8, 12, 18, 255), width=int(2.2 * s))
+                d.line((fcx - 4.8 * s, fcy + 0.3 * s, fcx - 1.2 * s, fcy + 3.8 * s), fill=(244, 248, 246, 255), width=int(2.2 * s))
+                d.line((fcx - 1.2 * s, fcy + 3.8 * s, fcx + 5.2 * s, fcy - 3.6 * s), fill=(244, 248, 246, 255), width=int(2.2 * s))
 
-                # Action Button 2: Discard / Cancel (cross circle)
+                # Action Button 2: Discard / Cancel (slate-crimson cross circle)
                 cx0 = w - 36
                 cx1 = cx0 + btn_d
                 self._btn_cancel_rect = (cx0 - 1, 4, cx1 + 2, h - 4)
                 c_hot = self._hover_btn == "cancel"
-                c_fill = (239, 68, 68, 238 if c_hot else 44)
-                c_out = (248, 113, 113, 255) if c_hot else (75, 89, 114, 230)
-                c_fg = (255, 255, 255, 255 if c_hot else 215)
+                c_fill = (200, 83, 83, 242 if c_hot else 48)
+                c_out = (224, 112, 112, 255) if c_hot else (78, 92, 118, 230)
+                c_fg = (255, 255, 255, 255 if c_hot else 210)
                 d.ellipse((cx0 * s, fy0 * s, cx1 * s, (fy0 + btn_d) * s), fill=c_fill, outline=c_out, width=s)
                 ccx, ccy = (cx0 + btn_d / 2.0) * s, cy
                 r_x = 3.8 * s
@@ -555,7 +555,7 @@ class DesktopHUD:
                 elapsed = max(0, int(time.time() - self.recording_start_time)) if self.recording_start_time else 0
                 default_lbl = f"Listening {elapsed // 60}:{elapsed % 60:02d}" if elapsed >= 3 else "Listening..."
                 label = self.custom_text or default_lbl
-                d.text((text_x, 12 * s), label, fill=(248, 250, 252, 255), font=self.font_main)
+                d.text((text_x, 12 * s), label, fill=(237, 241, 247, 255), font=self.font_main)
                 wave_start_x = (w - 60) * s
                 for bi in range(5):
                     phase = math.sin(self.anim_tick * 0.22 + bi * 0.85)
@@ -565,34 +565,34 @@ class DesktopHUD:
                     d.rounded_rectangle(
                         (bx, cy - bar_h, bx + 3.0 * s, cy + bar_h),
                         radius=int(1.5 * s),
-                        fill=(239, 68, 68, 245),
+                        fill=(214, 79, 79, 245),
                     )
 
             elif self.state == "transcribing":
-                d.text((text_x, 12 * s), self.custom_text or "Transcribing...", fill=(253, 230, 138, 255), font=self.font_main)
+                d.text((text_x, 12 * s), self.custom_text or "Transcribing...", fill=(235, 200, 130, 255), font=self.font_main)
                 dot_start_x = (w - 48) * s
                 for di in range(3):
                     dphase = math.sin(self.anim_tick * 0.25 - di * 0.8)
                     dalpha = int(120 + 135 * max(0, dphase))
                     drad = (2.6 + 1.2 * max(0, dphase)) * s
                     dx = dot_start_x + di * 11 * s
-                    d.ellipse((dx - drad, cy - drad, dx + drad, cy + drad), fill=(245, 158, 11, dalpha))
+                    d.ellipse((dx - drad, cy - drad, dx + drad, cy + drad), fill=(207, 160, 74, dalpha))
 
             elif self.state == "done":
-                d.text((text_x, 12 * s), self.custom_text or "Done", fill=(167, 243, 208, 255), font=self.font_main)
+                d.text((text_x, 12 * s), self.custom_text or "Done", fill=(108, 196, 157, 255), font=self.font_main)
 
             else:
-                d.text((text_x, 12 * s), "HushFlow", fill=(241, 245, 249, 255), font=self.font_main)
+                d.text((text_x, 12 * s), "HushFlow", fill=(237, 241, 247, 255), font=self.font_main)
                 kw, kh = 76 * s, 21 * s
                 kx, ky = (w * s) - kw - 12 * s, (sh - kh) // 2
                 d.rounded_rectangle(
                     (kx, ky, kx + kw, ky + kh),
                     radius=6 * s,
-                    fill=(26, 33, 48, 255),
-                    outline=(48, 60, 86, 255),
+                    fill=(28, 35, 52, 255),
+                    outline=(54, 67, 94, 255),
                     width=s,
                 )
-                d.text((kx + 11 * s, ky + 4 * s), "Ctrl + Alt", fill=(203, 213, 225, 255), font=self.font_badge)
+                d.text((kx + 11 * s, ky + 4 * s), "Ctrl + Alt", fill=(190, 200, 218, 255), font=self.font_badge)
 
         return hi.resize((w, h), Image.Resampling.LANCZOS)
 

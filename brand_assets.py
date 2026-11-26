@@ -39,14 +39,14 @@ def draw_squircle_badge(canvas_size: int = 1024, state: str = "idle", pad_ratio:
     grad = Image.new("RGBA", (canvas_size, canvas_size), (0, 0, 0, 0))
     grad_draw = ImageDraw.Draw(grad)
     if state == "recording":
-        top_c, bot_c = (44, 18, 24), (20, 10, 14)
-        border_c = (239, 68, 68, 220)
+        top_c, bot_c = (48, 22, 26), (26, 13, 16)
+        border_c = (200, 83, 83, 230)
     elif state == "transcribing":
-        top_c, bot_c = (38, 28, 16), (18, 14, 10)
-        border_c = (245, 158, 11, 220)
+        top_c, bot_c = (44, 34, 19), (24, 19, 12)
+        border_c = (207, 160, 74, 230)
     else:
-        top_c, bot_c = (24, 31, 48), (11, 15, 25)
-        border_c = (56, 72, 104, 210)
+        top_c, bot_c = (28, 35, 52), (16, 21, 33)
+        border_c = (56, 68, 96, 225)
 
     for yy in range(y0, y1 + 1):
         t = (yy - y0) / max(1, (y1 - y0))
@@ -79,20 +79,20 @@ def draw_squircle_badge(canvas_size: int = 1024, state: str = "idle", pad_ratio:
         by1 = cy + bh
 
         if state == "recording":
-            fill_rgba = (254, 226, 226, 255) if i != 2 else (248, 113, 113, 255)
+            fill_rgba = (250, 228, 228, 255) if i != 2 else (218, 92, 92, 255)
         elif state == "transcribing":
-            fill_rgba = (254, 243, 199, 255) if i != 2 else (251, 191, 36, 255)
+            fill_rgba = (250, 238, 210, 255) if i != 2 else (207, 160, 74, 255)
         else:
             if i == 2:
-                # Primary calm white bar
-                fill_rgba = (248, 250, 252, 255)
+                # Primary warm studio off-white bar
+                fill_rgba = (242, 244, 248, 255)
             elif i == 3:
-                # Signature subtle mint-emerald accent bar on HushFlow
-                fill_rgba = (52, 211, 153, 245)
+                # Signature matte studio terracotta accent bar
+                fill_rgba = (217, 107, 67, 255)
             elif i == 1:
-                fill_rgba = (226, 232, 240, 245)
+                fill_rgba = (214, 222, 235, 248)
             else:
-                fill_rgba = (148, 163, 184, 230)
+                fill_rgba = (138, 152, 178, 235)
 
         draw.rounded_rectangle([bx0, by0, bx1, by1], radius=bar_w / 2, fill=fill_rgba)
 

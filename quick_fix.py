@@ -36,7 +36,7 @@ def _set_dark_titlebar(window):
         window.update_idletasks()
         hwnd = ctypes.windll.user32.GetParent(window.winfo_id())
         dark = ctypes.c_int(1)
-        caption_bgr = ctypes.c_int(0x00130C09)  # #090c13 in BGR
+        caption_bgr = ctypes.c_int(0x00221713)  # #131722 in BGR
         ctypes.windll.dwmapi.DwmSetWindowAttribute(hwnd, 20, ctypes.byref(dark), 4)
         ctypes.windll.dwmapi.DwmSetWindowAttribute(hwnd, 35, ctypes.byref(caption_bgr), 4)
     except Exception:
@@ -207,7 +207,7 @@ class QuickFixWindow:
         self.root = root
         root.title(f"{APP_NAME} — Quick Correction")
         root.attributes("-topmost", True)
-        root.configure(fg_color="#090c13")
+        root.configure(fg_color="#131722")
         root.resizable(False, False)
 
         ico = get_app_icon_path()
@@ -227,10 +227,10 @@ class QuickFixWindow:
 
         card = ctk.CTkFrame(
             root,
-            fg_color="#10141e",
+            fg_color="#191F2E",
             corner_radius=12,
             border_width=1,
-            border_color="#1e2638",
+            border_color="#273044",
         )
         card.pack(fill="both", expand=True, padx=14, pady=14)
 
@@ -241,23 +241,23 @@ class QuickFixWindow:
             top_row,
             text="Correct Phrase & Update Lexicon",
             font=ctk.CTkFont(family="Segoe UI", size=13, weight="bold"),
-            text_color="#f8fafc",
+            text_color="#EDF1F7",
         ).pack(side="left")
 
         ctk.CTkLabel(
             top_row,
             text="Enter to save  •  Esc to cancel",
             font=ctk.CTkFont(family="Segoe UI", size=11),
-            text_color="#64748b",
+            text_color="#738096",
         ).pack(side="right")
 
         self.entry = ctk.CTkEntry(
             card,
             font=ctk.CTkFont(family="Segoe UI", size=13),
             height=38,
-            fg_color="#090c13",
-            border_color="#28324a",
-            text_color="#f8fafc",
+            fg_color="#101521",
+            border_color="#34405A",
+            text_color="#EDF1F7",
             corner_radius=8,
             placeholder_text="Enter the corrected sentence...",
         )
@@ -273,7 +273,7 @@ class QuickFixWindow:
             btn_row,
             text="Saves replacement rule locally inside your custom lexicon.",
             font=ctk.CTkFont(family="Segoe UI", size=11),
-            text_color="#64748b",
+            text_color="#738096",
         ).pack(side="left")
 
         ctk.CTkButton(
@@ -282,9 +282,9 @@ class QuickFixWindow:
             width=96,
             height=30,
             corner_radius=6,
-            fg_color="#f8fafc",
-            hover_color="#e2e8f0",
-            text_color="#090c13",
+            fg_color="#D96B43",
+            hover_color="#C55A34",
+            text_color="#FFFFFF",
             font=ctk.CTkFont(family="Segoe UI", size=12, weight="bold"),
             command=self._on_enter,
         ).pack(side="right", padx=(6, 0))
@@ -295,9 +295,9 @@ class QuickFixWindow:
             width=74,
             height=30,
             corner_radius=6,
-            fg_color="#161c28",
-            hover_color="#1f2738",
-            text_color="#94a3b8",
+            fg_color="#21283B",
+            hover_color="#2A334A",
+            text_color="#9AA6BA",
             font=ctk.CTkFont(family="Segoe UI", size=12),
             command=self.close,
         ).pack(side="right")

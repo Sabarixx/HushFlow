@@ -69,8 +69,8 @@ def _apply_seamless_window_chrome(title: str, icon_path: str):
         if not hwnd:
             return
         dark = ctypes.c_int(1)
-        caption_bgr = ctypes.c_int(0x000F0A08)  # #080a0f in BGR COLORREF
-        border_bgr = ctypes.c_int(0x00241A15)
+        caption_bgr = ctypes.c_int(0x00221713)  # #131722 in BGR COLORREF
+        border_bgr = ctypes.c_int(0x00443027)   # #273044 in BGR
         ctypes.windll.dwmapi.DwmSetWindowAttribute(hwnd, 20, ctypes.byref(dark), 4)
         ctypes.windll.dwmapi.DwmSetWindowAttribute(hwnd, 35, ctypes.byref(caption_bgr), 4)
         ctypes.windll.dwmapi.DwmSetWindowAttribute(hwnd, 34, ctypes.byref(border_bgr), 4)
@@ -599,7 +599,7 @@ def main():
         width=1060,
         height=760,
         min_size=(840, 580),
-        background_color="#080a0f",
+        background_color="#131722",
         text_select=True,
     )
     bridge._attach_window(window)
