@@ -1,20 +1,19 @@
 """
-WhisperFlow - Push-to-Talk Voice Typing for Windows powered by whisper.cpp
-Hold [Ctrl + Alt] -> Speak -> Release -> Auto-types into active window!
+HushFlow Engine - Local Offline Push-to-Talk & Hands-Free Voice Typing Service
+Powered by whisper.cpp (in-memory whisper-server + CLI fallback).
 
-Features:
-- In-Memory Engine: Runs whisper-server.exe in background with large-v3-turbo (sub-second speech inference)
-- Graceful CLI Fallback: Seamlessly falls back to whisper-cli.exe if server is unreachable
-- STRICT Single Hotkey: Ctrl + Alt Push-to-Talk (Zero Start menu / Wispr Flow conflicts)
-- Context & Domain Priming: Active window detection primes technical, digit, & custom vocabulary
-- High-Resolution 60 FPS HUD: Native Windows 32-bit ARGB Layered Window (DPI-aware, zero blur)
-- Robust Process Management: Stale mutex immune, reliable tray and HUD initialization
+Supports:
+- Direct in-memory RAM WAV streaming (zero temporary disk writes when server is healthy)
+- Push-to-Talk ([Ctrl + Alt], [Win + Alt], or [Right Alt]) + Hands-Free ([Ctrl + Alt + Space] / [Esc])
+- Non-destructive clipboard preservation & Win32 AttachThreadInput focus restoration
+- 3x supersampled 60 FPS floating edge pill (desktop_hud.py) & crisp squircle system tray icon
+- Loopback UDP IPC for real-time Studio mirroring, live hot-reload, and Alt+Z QuickFix
 """
 
 import os
 import sys
 import time
-import queue
+import socket
 import tempfile
 import subprocess
 import winsound
@@ -23,12 +22,41 @@ import logging
 import json
 import threading
 import ctypes
-import psutil
 import io
+import shutil
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-LOG_FILE = os.path.join(BASE_DIR, "whisper_flow.log")
-logging.basicConfig(filename=LOG_FILE, level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+import psutil
+
+from app_paths import (
+    APP_NAME,
+    CONFIG_PATH,
+    IS_FROZEN,
+    INSTALL_DIR,
+    MAIN_LOG_FILE,
+    SERVER_LOG_FILE,
+    PID_FILE,
+    STUDIO_IPC_PORT,
+    USER_DATA_DIR,
+    MODEL_REGISTRY,
+    canonical_model_key,
+    ensure_initialized,
+    find_binary,
+    get_hardware_summary,
+    load_config,
+    resolve_model_path,
+    save_config,
+)
+from brand_assets import render_tray_icon
+
+ENGINE_CTL_PORT = 48766
+
+ensure_initialized()
+logging.basicConfig(
+    filename=MAIN_LOG_FILE,
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+)
+
 
 class SafeWriter:
     def __init__(self, original):
@@ -48,6 +76,7 @@ class SafeWriter:
         except Exception:
             pass
 
+
 sys.stdout = SafeWriter(sys.stdout)
 sys.stderr = SafeWriter(sys.stderr)
 
@@ -58,112 +87,118 @@ import sounddevice as sd
 import scipy.io.wavfile as wav
 import keyboard
 import pyperclip
-from PIL import Image, ImageDraw
 import pystray
-
-# Persistent HTTP Session with connection pooling for sub-millisecond request dispatch
-HTTP_SESSION = requests.Session()
-adapter = requests.adapters.HTTPAdapter(pool_connections=5, pool_maxsize=10)
-HTTP_SESSION.mount("http://", adapter)
 
 from desktop_hud import DesktopHUD
 from smart_cleanup import apply_smart_cleanup
 from quick_fix import spawn_quick_fix, record_correction_and_learn
 
-# Tracking last dictation for 1-click Quick Fix training (Alt + Z)
+HTTP_SESSION = requests.Session()
+HTTP_SESSION.mount("http://", requests.adapters.HTTPAdapter(pool_connections=5, pool_maxsize=10))
+
 last_dictation_event = {
     "text": "",
     "wav_path": "",
     "hwnd": None,
     "window_title": "",
-    "timestamp": 0
+    "timestamp": 0,
 }
-
-# Binary & Config paths
-def find_binary(filename):
-    for candidate in [
-        os.path.join(BASE_DIR, "bin", filename),
-        os.path.join(BASE_DIR, filename),
-        os.path.join(BASE_DIR, "build", "bin", "Release", filename),
-    ]:
-        if os.path.exists(candidate):
-            return candidate
-    return os.path.join(BASE_DIR, "bin", filename)
 
 WHISPER_SERVER = find_binary("whisper-server.exe")
 WHISPER_CLI = find_binary("whisper-cli.exe")
-PID_FILE = os.path.join(BASE_DIR, "whisper_flow.pid")
-CONFIG_FILE = os.path.join(BASE_DIR, "whisper_flow_config.json")
 
-MODEL_REGISTRY = {
-    "large-v3-turbo": "ggml-large-v3-turbo-q5_0.bin",
-    "large": "ggml-large-v3-turbo-q5_0.bin",
-    "large-v3": "ggml-large-v3-turbo-q5_0.bin",
-    "small": "ggml-small.en-q5_1.bin",
-    "small.en": "ggml-small.en-q5_1.bin",
-    "small.en-q5_1": "ggml-small.en-q5_1.bin",
-    "base": "ggml-base.en.bin",
-    "base.en": "ggml-base.en.bin",
-}
-
-def get_config():
-    if os.path.exists(CONFIG_FILE):
-        try:
-            with open(CONFIG_FILE, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception:
-            pass
-    return {"cleanup_level": "medium", "hud_visible": True, "model": "large-v3-turbo", "dock_y": 360}
-
-CONFIG = get_config()
+CONFIG = load_config()
 CLEANUP_LEVEL = CONFIG.get("cleanup_level", "medium").lower()
+ACTIVE_MODEL_PATH = resolve_model_path(CONFIG.get("model"))
 
-def resolve_model_path():
-    req_model = CONFIG.get("model", "small").lower()
-    target_filename = MODEL_REGISTRY.get(req_model, "ggml-small.en-q5_1.bin")
-    search_dirs = [
-        BASE_DIR,
-        os.path.join(os.path.dirname(BASE_DIR), "whisper.cpp"),
-        os.path.join(BASE_DIR, "models"),
-    ]
-    # First search for the requested model
-    for d in search_dirs:
-        candidate = os.path.join(d, target_filename)
-        if os.path.exists(candidate):
-            return candidate
-    # Fallback to any available model in search dirs
-    for d in search_dirs:
-        for fname in MODEL_REGISTRY.values():
-            candidate = os.path.join(d, fname)
-            if os.path.exists(candidate):
-                return candidate
-    return os.path.join(BASE_DIR, target_filename)
-
-ACTIVE_MODEL_PATH = resolve_model_path()
 SAMPLE_RATE = 16000
 CHANNELS = 1
 SERVER_URL = "http://127.0.0.1:8080"
 server_process = None
+_hud_ref = None
+_reload_mic_flag = threading.Event()
+_shutdown_flag = threading.Event()
+
+
+def notify_studio(payload: dict):
+    """Best-effort connectionless UDP loopback packet to HushFlow Studio."""
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.sendto(json.dumps(payload, ensure_ascii=False).encode("utf-8"), ("127.0.0.1", STUDIO_IPC_PORT))
+        sock.close()
+    except Exception:
+        pass
+
+
+def open_studio_window():
+    """Focus already-running HushFlow Studio via IPC, or spawn Studio process."""
+    notify_studio({"type": "show_studio"})
+    try:
+        # Check if Studio process is already running
+        studio_alive = False
+        for proc in psutil.process_iter(["pid", "name", "cmdline"]):
+            try:
+                cmd = proc.info.get("cmdline") or []
+                cmd_str = " ".join(cmd).lower()
+                if "whisper_flow_studio.py" in cmd_str:
+                    studio_alive = True
+                    break
+                if IS_FROZEN and os.path.basename(sys.executable).lower() == (proc.info.get("name") or "").lower():
+                    if "--engine" not in cmd_str and "--stop" not in cmd_str and "--quickfix" not in cmd_str:
+                        studio_alive = True
+                        break
+            except Exception:
+                pass
+
+        if not studio_alive:
+            if IS_FROZEN:
+                subprocess.Popen([sys.executable], cwd=INSTALL_DIR)
+            else:
+                studio_script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "whisper_flow_studio.py")
+                pythonw = sys.executable.replace("python.exe", "pythonw.exe")
+                if not os.path.exists(pythonw):
+                    pythonw = sys.executable
+                subprocess.Popen([pythonw, studio_script], cwd=os.path.dirname(os.path.abspath(__file__)))
+    except Exception as e:
+        logging.warning(f"Could not launch HushFlow Studio: {e}")
+
+
+_engine_mutex_handle = None
+
 
 def check_single_instance():
-    """
-    Stale-immune single instance check:
-    Inspects active running processes for an existing whisper_flow.py instance.
-    """
-    current_pid = os.getpid()
-    for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
-        try:
-            if proc.info['pid'] != current_pid and 'python' in (proc.info['name'] or '').lower():
-                cmdline = ' '.join(proc.info['cmdline'] or [])
-                if 'whisper_flow.py' in cmdline:
+    """Kernel-enforced single instance lock via Windows Named Mutex (immune to cmdline noise)."""
+    global _engine_mutex_handle
+    try:
+        kernel32 = ctypes.windll.kernel32
+        handle = kernel32.CreateMutexW(None, False, "Local\\HushFlow_Engine_SingleInstance_V2")
+        last_err = kernel32.GetLastError()
+        if handle and last_err == 183:  # ERROR_ALREADY_EXISTS
+            kernel32.CloseHandle(handle)
+            return False
+        _engine_mutex_handle = handle
+        return True
+    except Exception:
+        current_pid = os.getpid()
+        for proc in psutil.process_iter(["pid", "name", "cmdline"]):
+            try:
+                if proc.info["pid"] == current_pid:
+                    continue
+                cmdline = " ".join(proc.info.get("cmdline") or []).lower()
+                name = (proc.info.get("name") or "").lower()
+                if "python" in name and "whisper_flow.py" in cmdline:
                     return False
-        except (psutil.NoSuchProcess, psutil.AccessDenied):
-            pass
-    return True
+                if IS_FROZEN and "hushflow" in name and "--engine" in cmdline:
+                    return False
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                pass
+        return True
+
 
 def save_pid():
     with open(PID_FILE, "w", encoding="utf-8") as f:
         f.write(str(os.getpid()))
+
 
 def cleanup_pid():
     if os.path.exists(PID_FILE):
@@ -172,59 +207,70 @@ def cleanup_pid():
         except Exception:
             pass
 
+
 atexit.register(cleanup_pid)
+
 
 def is_server_healthy():
     try:
-        r = HTTP_SESSION.get(SERVER_URL, timeout=0.8)
+        r = HTTP_SESSION.get(f"{SERVER_URL}/health", timeout=0.8)
         return r.status_code == 200
     except Exception:
-        return False
+        try:
+            r = HTTP_SESSION.get(SERVER_URL, timeout=0.8)
+            return r.status_code == 200
+        except Exception:
+            return False
+
 
 def ensure_whisper_server():
-    """Start whisper-server.exe in background if not already alive, with persistent memory warm-up."""
-    global server_process
+    """Start whisper-server.exe in background if not alive, with hardware thread scaling."""
+    global server_process, ACTIVE_MODEL_PATH
+    ACTIVE_MODEL_PATH = resolve_model_path(CONFIG.get("model"))
     if is_server_healthy():
         logging.info("Whisper server is already running on port 8080.")
         return True
 
     if not os.path.exists(WHISPER_SERVER) or not os.path.exists(ACTIVE_MODEL_PATH):
-        logging.warning("whisper-server.exe or model not found. Running in CLI mode.")
+        logging.warning(f"whisper-server ({WHISPER_SERVER}) or model ({ACTIVE_MODEL_PATH}) missing. CLI fallback mode.")
         return False
 
+    threads = get_hardware_summary().get("opt_threads_num", "4")
     cmd = [
         WHISPER_SERVER,
         "-m", ACTIVE_MODEL_PATH,
         "--host", "127.0.0.1",
         "--port", "8080",
         "-l", "en",
-        "-t", "8",
+        "-t", threads,
         "-nt",
         "-sns",
-        "-nth", "0.65"
+        "-nth", "0.65",
     ]
     try:
         logging.info(f"Starting in-memory whisper server: {' '.join(cmd)}")
         creationflags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
-        server_log_path = os.path.join(BASE_DIR, "whisper_server.log")
-        server_log_file = open(server_log_path, "w", encoding="utf-8")
-        server_process = subprocess.Popen(cmd, stdout=server_log_file, stderr=subprocess.STDOUT, creationflags=creationflags)
+        server_log_file = open(SERVER_LOG_FILE, "w", encoding="utf-8")
+        server_process = subprocess.Popen(
+            cmd, stdout=server_log_file, stderr=subprocess.STDOUT, creationflags=creationflags
+        )
         for _ in range(40):
             time.sleep(0.3)
             if is_server_healthy():
-                logging.info(f"In-memory whisper-server online (PID {server_process.pid}) - Model fully warmed into RAM")
+                logging.info(f"In-memory whisper-server online (PID {server_process.pid})")
                 return True
-        logging.warning("whisper-server started but did not respond within 9s. Falling back to CLI.")
+        logging.warning("whisper-server did not respond within timeout. Falling back to CLI.")
         return False
     except Exception as e:
         logging.warning(f"Could not launch whisper-server: {e}. Will use CLI fallback.")
         return False
 
+
 def cleanup_server():
     global server_process
     if server_process is not None:
         try:
-            logging.info(f"Terminating in-memory whisper server (PID {server_process.pid})")
+            logging.info(f"Terminating whisper server (PID {server_process.pid})")
             server_process.terminate()
             server_process.wait(timeout=2)
         except Exception:
@@ -233,11 +279,19 @@ def cleanup_server():
             except Exception:
                 pass
         server_process = None
+    # Ensure orphaned whisper-server bound to HushFlow stops cleanly
+    for p in psutil.process_iter(["pid", "name"]):
+        try:
+            if "whisper-server" in (p.info.get("name") or "").lower():
+                p.terminate()
+        except Exception:
+            pass
+
 
 atexit.register(cleanup_server)
 
+
 def play_beep_async(freq, duration_ms):
-    """Play feedback beeps in a background thread so audio recording isn't delayed."""
     def _beep():
         try:
             winsound.Beep(freq, duration_ms)
@@ -245,85 +299,80 @@ def play_beep_async(freq, duration_ms):
             pass
     threading.Thread(target=_beep, daemon=True).start()
 
+
 def is_key_pressed(vk):
-    """Direct hardware key state check via GetAsyncKeyState (immune to hook misses/latches)."""
     try:
         return bool(ctypes.windll.user32.GetAsyncKeyState(vk) & 0x8000)
     except Exception:
         return False
 
+
 def is_hotkey_down():
     """
-    Checks if active Push-to-Talk hotkey is pressed.
-    Directly queries Win32 hardware state to eliminate stuck keys.
-    Supports both [Ctrl + Alt] and [Win + Alt] seamlessly.
-    Ignores hotkey if Tab is pressed (prevents Alt+Tab conflict).
+    Query Win32 hardware key state for configured Push-to-Talk hotkey.
+    Supports 'ctrl+alt' (default, also accepts Win+Alt), 'win+alt', and 'right_alt'.
+    Ignores while Tab is pressed so Alt+Tab never triggers dictation.
     """
     try:
-        # Ignore if Tab is pressed (e.g. user is Alt+Tabbing between apps)
         if is_key_pressed(0x09):  # VK_TAB
             return False
 
-        alt = is_key_pressed(0x12) or is_key_pressed(0xA4) or is_key_pressed(0xA5)   # VK_MENU, VK_LMENU, VK_RMENU
-        ctrl = is_key_pressed(0x11) or is_key_pressed(0xA2) or is_key_pressed(0xA3)  # VK_CONTROL, VK_LCONTROL, VK_RCONTROL
-        win = is_key_pressed(0x5B) or is_key_pressed(0x5C)                           # VK_LWIN, VK_RWIN
+        alt = is_key_pressed(0x12) or is_key_pressed(0xA4) or is_key_pressed(0xA5)
+        ctrl = is_key_pressed(0x11) or is_key_pressed(0xA2) or is_key_pressed(0xA3)
+        win = is_key_pressed(0x5B) or is_key_pressed(0x5C)
+        r_alt = is_key_pressed(0xA5)
 
-        configured = CONFIG.get("hotkey", "ctrl+alt").lower()
+        configured = CONFIG.get("hotkey", "ctrl+alt").lower().strip()
+        if configured == "right_alt":
+            return r_alt and not ctrl and not win
         if "win" in configured and "alt" in configured:
             return win and alt
-        elif "ctrl" in configured and "alt" in configured:
-            return (ctrl and alt) or (win and alt)
-        else:
-            return (ctrl and alt) or (win and alt)
+        return (ctrl and alt) or (win and alt)
     except Exception:
         return False
 
+
 def is_toggle_hotkey_down():
-    """Checks if Hands-Free toggle hotkey [Ctrl + Alt + Space] or [Win + Alt + Space] is pressed."""
+    """Checks Hands-Free toggle hotkey [Ctrl + Alt + Space] or [Win + Alt + Space]."""
     try:
-        space = is_key_pressed(0x20)  # VK_SPACE
-        if not space:
+        if not is_key_pressed(0x20):  # VK_SPACE
             return False
         alt = is_key_pressed(0x12) or is_key_pressed(0xA4) or is_key_pressed(0xA5)
         ctrl = is_key_pressed(0x11) or is_key_pressed(0xA2) or is_key_pressed(0xA3)
         win = is_key_pressed(0x5B) or is_key_pressed(0x5C)
-        return (ctrl and alt and space) or (win and alt and space)
+        return (ctrl and alt) or (win and alt)
     except Exception:
         return False
 
-# Accidental key tap threshold (sub-350ms presses are ignored)
+
 MIN_AUDIO_DURATION = 0.35
 
+
 def calculate_audio_rms(audio_data):
-    """Calculate the Root-Mean-Square (RMS) amplitude of int16 audio array."""
     if len(audio_data) == 0:
         return 0.0
     samples = audio_data.astype(np.float64).flatten()
     return float(np.sqrt(np.mean(samples ** 2)))
 
+
 def is_audio_silent(audio_data, duration_sec):
-    """
-    Intelligent silence detector:
-    - Only flags silence on very short clips (< 1.0s) with low amplitude (accidental tap).
-    - Never drops sustained speech (>= 1.0s).
-    """
     if duration_sec < MIN_AUDIO_DURATION:
         return True
     if duration_sec < 1.0:
         peak = float(np.max(np.abs(audio_data)))
         rms = calculate_audio_rms(audio_data)
-        # Background ambient mic noise is ~150-160 RMS; speech peak is > 800
         if peak < 500 and rms < 130.0:
             return True
     return False
 
+
 HALLUCINATION_BLACKLIST = {
     "[blank_audio]", "[silence]", "(silence)", "(music)", "(applause)",
-    "[applause]", "(bell rings)", "[whispering]", "(whispering)", ".", "you", "thank you."
+    "[applause]", "(bell rings)", "[whispering]", "(whispering)", ".", "you", "thank you.",
 }
 
+
 def is_hallucination_or_empty(text: str) -> bool:
-    """Filter out empty text, Whisper silence tokens, or priming prompt regurgitation."""
     if not text:
         return True
     cleaned = text.strip()
@@ -335,10 +384,11 @@ def is_hallucination_or_empty(text: str) -> bool:
         return True
     return False
 
+
 def get_active_window_prompt():
-    """Detect foreground application to dynamically prime Whisper with domain vocabulary."""
+    """Detect foreground window context and combine with custom lexicon terms."""
     global CONFIG
-    CONFIG = get_config()
+    CONFIG = load_config()
     title = ""
     try:
         hwnd = ctypes.windll.user32.GetForegroundWindow()
@@ -351,8 +401,10 @@ def get_active_window_prompt():
         pass
 
     base_priming = "Clear English speech dictation. Accurate punctuation, technical terminology, and natural phrasing."
-
-    coding_indicators = ["code", "visual studio", "terminal", "powershell", "cmd", "bash", "sublime", "git", "intellij", "pycharm", ".py", ".ts", ".js", ".cpp", ".rs"]
+    coding_indicators = [
+        "code", "visual studio", "terminal", "powershell", "cmd", "bash", "sublime",
+        "git", "intellij", "pycharm", ".py", ".ts", ".js", ".cpp", ".rs",
+    ]
     comm_indicators = ["slack", "teams", "outlook", "chrome", "edge", "firefox", "discord", "mail", "whatsapp"]
 
     domain_terms = []
@@ -362,7 +414,6 @@ def get_active_window_prompt():
         domain_terms = ["email", "meeting", "schedule", "calendar", "message", "project", "client", "deadline", "regards"]
 
     custom_vocab = CONFIG.get("custom_vocabulary", [])
-    # Also inject user-defined replacement target words into Whisper's priming prompt
     rep_targets = list(CONFIG.get("word_replacements", {}).values())
 
     all_prompts = [base_priming]
@@ -375,11 +426,11 @@ def get_active_window_prompt():
 
     return " ".join(all_prompts)
 
+
 def transcribe_audio(audio_source, temp_wav_path=None):
     """
-    Ultra-low latency in-memory transcription:
-    If audio_source is a numpy array, encodes directly in RAM (BytesIO) with 0 disk I/O.
-    Falls back to whisper-cli.exe if the server is unreachable.
+    In-memory transcription directly from RAM (BytesIO WAV -> HTTP POST).
+    Falls back cleanly to whisper-cli.exe only if whisper-server is unreachable.
     """
     prompt = get_active_window_prompt()
 
@@ -394,64 +445,66 @@ def transcribe_audio(audio_source, temp_wav_path=None):
         with open(audio_source, "rb") as f:
             wav_bytes = f.read()
 
-    # Strategy 1: Sub-millisecond In-Memory Server HTTP POST (Zero Disk I/O)
     if is_server_healthy() and wav_bytes:
         try:
             files = {"file": ("audio.wav", wav_bytes, "audio/wav")}
-            data = {
-                "temperature": "0.0",
-                "response_format": "json",
-                "prompt": prompt
-            }
+            data = {"temperature": "0.0", "response_format": "json", "prompt": prompt}
             dyn_timeout = max(60.0, (len(audio_source) / SAMPLE_RATE * 3.0) if isinstance(audio_source, np.ndarray) else 60.0)
             resp = HTTP_SESSION.post(f"{SERVER_URL}/inference", files=files, data=data, timeout=dyn_timeout)
             if resp.status_code == 200:
-                text = resp.json().get("text", "").strip()
-                return text
+                return resp.json().get("text", "").strip()
         except Exception as e:
             logging.warning(f"whisper-server inference failed: {e}. Falling back to CLI.")
 
-    # Strategy 2: CLI Fallback (requires disk file)
-    target_wav = audio_source if isinstance(audio_source, str) else temp_wav_path
-    if not target_wav or not os.path.exists(target_wav):
-        if wav_bytes and temp_wav_path:
-            with open(temp_wav_path, "wb") as f:
-                f.write(wav_bytes)
-            target_wav = temp_wav_path
+    # Strategy 2: CLI fallback (temp file written and immediately deleted)
+    created_temp = False
+    target_wav = audio_source if isinstance(audio_source, str) else None
+    if not target_wav and wav_bytes and temp_wav_path:
+        with open(temp_wav_path, "wb") as f:
+            f.write(wav_bytes)
+        target_wav = temp_wav_path
+        created_temp = True
 
-    if target_wav and os.path.exists(target_wav):
-        cmd = [
-            WHISPER_CLI,
-            "-m", ACTIVE_MODEL_PATH,
-            "-f", target_wav,
-            "-nt",
-            "-np",
-            "-t", "8",
-            "-fa",
-            "-nth", "0.65",
-            "-sns",
-            "--prompt", prompt
-        ]
-        try:
+    threads = get_hardware_summary().get("opt_threads_num", "4")
+    try:
+        if target_wav and os.path.exists(target_wav) and os.path.exists(WHISPER_CLI):
+            cmd = [
+                WHISPER_CLI,
+                "-m", resolve_model_path(CONFIG.get("model")),
+                "-f", target_wav,
+                "-nt",
+                "-np",
+                "-t", threads,
+                "-fa",
+                "-nth", "0.65",
+                "-sns",
+                "--prompt", prompt,
+            ]
             res = subprocess.run(
                 cmd,
                 capture_output=True,
                 text=True,
                 encoding="utf-8",
                 timeout=45.0,
-                creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+                creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
             )
             return res.stdout.strip()
-        except Exception as e:
-            logging.error(f"whisper-cli execution failed: {e}")
+    except Exception as e:
+        logging.error(f"whisper-cli execution failed: {e}")
+    finally:
+        if created_temp and target_wav and os.path.exists(target_wav):
+            try:
+                os.remove(target_wav)
+            except Exception:
+                pass
 
     return ""
+
 
 def paste_text(text, target_hwnd=None):
     if not text:
         return
 
-    # Wait for hotkey release with a strict 0.5s timeout using GetAsyncKeyState
     start = time.time()
     while time.time() - start < 0.5:
         alt = is_key_pressed(0x12) or is_key_pressed(0xA4) or is_key_pressed(0xA5)
@@ -462,14 +515,12 @@ def paste_text(text, target_hwnd=None):
         time.sleep(0.02)
     time.sleep(0.04)
 
-    # 1. Preserve user's existing clipboard contents (zero clipboard pollution)
     old_clipboard = None
     try:
         old_clipboard = pyperclip.paste()
     except Exception:
         pass
 
-    # 2. Robust Window Focus Reassertion with AttachThreadInput
     if target_hwnd and ctypes.windll.user32.IsWindow(target_hwnd):
         try:
             fg_hwnd = ctypes.windll.user32.GetForegroundWindow()
@@ -487,16 +538,14 @@ def paste_text(text, target_hwnd=None):
         except Exception:
             pass
 
-    # 3. High-Speed Clipboard Injection
     try:
         pyperclip.copy(text)
         time.sleep(0.04)
-        keyboard.send('ctrl+v')
+        keyboard.send("ctrl+v")
         time.sleep(0.06)
     except Exception as e:
         logging.warning(f"Clipboard paste failed: {e}")
 
-    # 4. Asynchronously restore original clipboard contents after 0.5s
     def _restore_clipboard():
         try:
             time.sleep(0.5)
@@ -504,154 +553,189 @@ def paste_text(text, target_hwnd=None):
                 pyperclip.copy(old_clipboard)
         except Exception:
             pass
+
     threading.Thread(target=_restore_clipboard, daemon=True).start()
 
+
 def create_tray_icon_image(state="idle"):
-    img = Image.new("RGBA", (64, 64), color=(0, 0, 0, 0))
-    draw = ImageDraw.Draw(img)
-    cx, cy = 32, 32
-    if state == "recording":
-        draw.ellipse((4, 4, 60, 60), fill=(220, 38, 38, 255))
-        draw.ellipse((cx - 16, cy - 16, cx + 16, cy + 16), outline=(255, 255, 255, 220), width=3)
-        draw.ellipse((cx - 7, cy - 7, cx + 7, cy + 7), fill=(255, 255, 255, 255))
-    elif state == "transcribing":
-        draw.ellipse((4, 4, 60, 60), fill=(245, 158, 11, 255))
-        draw.ellipse((cx - 16, cy - 16, cx + 16, cy + 16), outline=(255, 255, 255, 220), width=3)
-        draw.ellipse((cx - 7, cy - 7, cx + 7, cy + 7), fill=(255, 255, 255, 255))
-    else:
-        # Distinctive WhisperFlow icon: Obsidian disc with bright cyan & ivory concentric rings
-        draw.ellipse((4, 4, 60, 60), fill=(22, 22, 24, 255), outline=(60, 60, 65, 255), width=2)
-        draw.ellipse((cx - 16, cy - 16, cx + 16, cy + 16), outline=(56, 189, 248, 230), width=3)
-        draw.ellipse((cx - 7, cy - 7, cx + 7, cy + 7), fill=(255, 255, 240, 255))
-    return img
+    """Delegate tray icon rendering to 4x supersampled HushFlow squircle generator."""
+    return render_tray_icon(state=state, size=64)
+
 
 def set_cleanup_level(level, hud=None):
-    global CLEANUP_LEVEL
+    global CLEANUP_LEVEL, CONFIG
     CLEANUP_LEVEL = level
-    try:
-        with open(CONFIG_FILE, "r+", encoding="utf-8") as f:
-            data = json.load(f)
-            data["cleanup_level"] = level
-            f.seek(0)
-            f.truncate()
-            json.dump(data, f, indent=2)
-    except Exception:
-        pass
+    CONFIG = load_config()
+    CONFIG["cleanup_level"] = level
+    save_config(CONFIG)
     if hud:
         hud.set_state("idle")
     logging.info(f"Cleanup level updated to: {level}")
 
+
 def set_active_model(model_name):
-    global ACTIVE_MODEL_PATH
-    if model_name in MODEL_REGISTRY and os.path.exists(MODEL_REGISTRY[model_name]):
-        ACTIVE_MODEL_PATH = MODEL_REGISTRY[model_name]
-        try:
-            with open(CONFIG_FILE, "r+", encoding="utf-8") as f:
-                data = json.load(f)
-                data["model"] = model_name
-                f.seek(0)
-                f.truncate()
-                json.dump(data, f, indent=2)
-        except Exception:
-            pass
-        logging.info(f"Active model set to {model_name} ({ACTIVE_MODEL_PATH})")
+    global ACTIVE_MODEL_PATH, CONFIG
+    key = canonical_model_key(model_name)
+    cand = resolve_model_path(key, fallback_any=False)
+    if os.path.exists(cand):
+        ACTIVE_MODEL_PATH = cand
+        CONFIG = load_config()
+        CONFIG["model"] = key
+        save_config(CONFIG)
+        logging.info(f"Active model set to {key} ({ACTIVE_MODEL_PATH})")
         cleanup_server()
         ensure_whisper_server()
 
+
+def _start_control_listener():
+    """Listen on UDP 48766 so HushFlow Studio can hot-reload config, mic, HUD visibility, or model."""
+    def _worker():
+        global CONFIG, CLEANUP_LEVEL
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            sock.bind(("127.0.0.1", ENGINE_CTL_PORT))
+            sock.settimeout(1.0)
+        except Exception:
+            return
+
+        while not _shutdown_flag.is_set():
+            try:
+                data, _ = sock.recvfrom(4096)
+                msg = json.loads(data.decode("utf-8"))
+                cmd = msg.get("cmd")
+                if cmd == "reload_config":
+                    old_mic = CONFIG.get("mic_device")
+                    old_model = CONFIG.get("model")
+                    CONFIG = load_config()
+                    CLEANUP_LEVEL = CONFIG.get("cleanup_level", "medium").lower()
+                    if _hud_ref is not None:
+                        _hud_ref.set_visible(bool(CONFIG.get("hud_visible", True)))
+                    if CONFIG.get("mic_device") != old_mic:
+                        _reload_mic_flag.set()
+                    if CONFIG.get("model") != old_model:
+                        threading.Thread(target=set_active_model, args=(CONFIG.get("model"),), daemon=True).start()
+                elif cmd == "stop":
+                    _shutdown_flag.set()
+            except socket.timeout:
+                continue
+            except Exception:
+                pass
+        try:
+            sock.close()
+        except Exception:
+            pass
+
+    threading.Thread(target=_worker, daemon=True).start()
+
+
+def stop_running_engine():
+    """Cleanly terminate any active HushFlow Engine and whisper-server processes."""
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.sendto(b'{"cmd":"stop"}', ("127.0.0.1", ENGINE_CTL_PORT))
+        sock.close()
+        time.sleep(0.4)
+    except Exception:
+        pass
+
+    current_pid = os.getpid()
+    for p in psutil.process_iter(["pid", "name", "cmdline"]):
+        try:
+            if p.info["pid"] == current_pid:
+                continue
+            cmd = " ".join(p.info.get("cmdline") or []).lower()
+            name = (p.info.get("name") or "").lower()
+            if "whisper_flow.py" in cmd or ("hushflow" in name and "--engine" in cmd) or "whisper-server" in name:
+                p.terminate()
+        except Exception:
+            pass
+
+    cleanup_pid()
+
+
 def main():
+    global CONFIG, CLEANUP_LEVEL, _hud_ref
+
     if not check_single_instance():
-        logging.warning("WhisperFlow already running. Aborting duplicate start.")
+        logging.warning("HushFlow Engine already running. Aborting duplicate start.")
         sys.exit(0)
 
-    logging.info(f"WhisperFlow main started with PID {os.getpid()}")
+    logging.info(f"{APP_NAME} engine started (PID {os.getpid()})")
     save_pid()
+    _start_control_listener()
 
-    # Pre-warm in-memory whisper server in background thread
     threading.Thread(target=ensure_whisper_server, daemon=True).start()
-    
-    print("=" * 60)
-    print("  WHISPER FLOW - Push-to-Talk Voice Dictation (Pro Tier)")
-    print("=" * 60)
-    print(f"Server Engine : {WHISPER_SERVER}")
-    print(f"CLI Fallback  : {WHISPER_CLI}")
-    print(f"Active Model  : {os.path.basename(ACTIVE_MODEL_PATH)}")
-    print(f"Cleanup Level : '{CLEANUP_LEVEL.upper()}' (Wispr Flow Smart Engine)")
-    print(f"PID           : {os.getpid()} (saved to {PID_FILE})")
-    print("-" * 60)
-    print("Hotkey (Hold to speak, release to paste):")
-    print("  -> Hold [Ctrl + Alt]")
-    print("Live Desktop Indicator: Docked to Left Screen Edge (60 FPS Layered Pill)")
-    print("System Tray: Active in taskbar notification area")
-    print("Exit: Press Ctrl+Shift+Q or right-click Tray icon")
-    print("-" * 60)
-    print("Status: READY - listening for hotkey...\n")
 
-    # Setup Native High-DPI 60 FPS Desktop HUD
     hud = None
     try:
         hud_visible = CONFIG.get("hud_visible", True)
-        hud = DesktopHUD(config_path=CONFIG_FILE, visible=hud_visible)
+        hud = DesktopHUD(config_path=CONFIG_PATH, visible=hud_visible)
+        _hud_ref = hud
     except Exception as e:
         logging.warning(f"Could not initialize desktop HUD: {e}")
 
-    # Setup System Tray Icon
     tray_icon = None
     try:
         def on_quit(icon, item):
+            _shutdown_flag.set()
             icon.stop()
-            if hud:
-                hud.close()
-            cleanup_server()
-            sys.exit(0)
 
         def toggle_hud(icon, item):
             if hud:
                 new_state = not hud.visible
                 hud.set_visible(new_state)
-                CONFIG["hud_visible"] = new_state
-                try:
-                    with open(CONFIG_FILE, "w", encoding="utf-8") as f:
-                        json.dump(CONFIG, f, indent=2)
-                except Exception:
-                    pass
-
-        def open_settings(icon, item):
-            os.system(f'notepad.exe "{CONFIG_FILE}"')
-
-        def open_folder(icon, item):
-            os.system(f'explorer.exe "{BASE_DIR}"')
+                cfg = load_config()
+                cfg["hud_visible"] = new_state
+                save_config(cfg)
 
         icon_menu = pystray.Menu(
-            pystray.MenuItem("WhisperFlow: Ready (Ctrl + Alt)", None, enabled=False),
+            pystray.MenuItem(f"{APP_NAME} — Ready", None, enabled=False),
+            pystray.MenuItem(f"Open {APP_NAME} Studio", lambda icon, item: open_studio_window(), default=True),
             pystray.Menu.SEPARATOR,
-            pystray.MenuItem("Desktop Floating Widget", toggle_hud, checked=lambda item: hud.visible if hud else False),
+            pystray.MenuItem("Floating Edge Indicator", toggle_hud, checked=lambda item: hud.visible if hud else False),
             pystray.MenuItem(
-                "Cleanup Level",
+                "Cleanup Mode",
                 pystray.Menu(
                     pystray.MenuItem("None (Verbatim)", lambda icon, item: set_cleanup_level("none", hud), checked=lambda item: CLEANUP_LEVEL == "none"),
                     pystray.MenuItem("Light (Filler Removal)", lambda icon, item: set_cleanup_level("light", hud), checked=lambda item: CLEANUP_LEVEL == "light"),
                     pystray.MenuItem("Medium (Self-Correction)", lambda icon, item: set_cleanup_level("medium", hud), checked=lambda item: CLEANUP_LEVEL == "medium"),
                     pystray.MenuItem("High (Full Polish)", lambda icon, item: set_cleanup_level("high", hud), checked=lambda item: CLEANUP_LEVEL == "high"),
-                )
+                ),
             ),
             pystray.MenuItem(
-                "Model Engine",
+                "Speech Model",
                 pystray.Menu(
-                    pystray.MenuItem("Small.en (Fast Sub-Second)", lambda icon, item: set_active_model("small"), checked=lambda item: "small" in ACTIVE_MODEL_PATH),
-                    pystray.MenuItem("Large v3 Turbo (High Accuracy)", lambda icon, item: set_active_model("large-v3-turbo"), checked=lambda item: "large-v3-turbo" in ACTIVE_MODEL_PATH),
-                    pystray.MenuItem("Base.en (Ultra-light)", lambda icon, item: set_active_model("base"), checked=lambda item: "base" in ACTIVE_MODEL_PATH),
-                )
+                    pystray.MenuItem(
+                        "Small English (Balanced)",
+                        lambda icon, item: set_active_model("small.en-q5_1"),
+                        checked=lambda item: "small" in ACTIVE_MODEL_PATH,
+                        enabled=lambda item: os.path.exists(resolve_model_path("small.en-q5_1", fallback_any=False)),
+                    ),
+                    pystray.MenuItem(
+                        "Large v3 Turbo (High Accuracy)",
+                        lambda icon, item: set_active_model("large-v3-turbo"),
+                        checked=lambda item: "large-v3-turbo" in ACTIVE_MODEL_PATH,
+                        enabled=lambda item: os.path.exists(resolve_model_path("large-v3-turbo", fallback_any=False)),
+                    ),
+                    pystray.MenuItem(
+                        "Base English (Ultra-Light)",
+                        lambda icon, item: set_active_model("base.en"),
+                        checked=lambda item: "base" in ACTIVE_MODEL_PATH,
+                        enabled=lambda item: os.path.exists(resolve_model_path("base.en", fallback_any=False)),
+                    ),
+                ),
             ),
             pystray.Menu.SEPARATOR,
-            pystray.MenuItem("Open Settings", open_settings),
-            pystray.MenuItem("Open Folder", open_folder),
-            pystray.Menu.SEPARATOR,
-            pystray.MenuItem("Exit", on_quit)
+            pystray.MenuItem(f"Quit {APP_NAME}", on_quit),
         )
 
-        tray_icon = pystray.Icon("WhisperFlow", create_tray_icon_image("idle"), f"WhisperFlow - Ready ({CLEANUP_LEVEL.upper()})", icon_menu)
-        tray_thread = threading.Thread(target=tray_icon.run, daemon=True)
-        tray_thread.start()
+        tray_icon = pystray.Icon(
+            APP_NAME,
+            create_tray_icon_image("idle"),
+            f"{APP_NAME} — Ready",
+            icon_menu,
+        )
+        threading.Thread(target=tray_icon.run, daemon=True).start()
     except Exception as e:
         logging.warning(f"Could not initialize system tray icon: {e}")
 
@@ -666,110 +750,118 @@ def main():
         if is_recording:
             audio_frames.append(indata.copy())
             if hud:
-                # Real-time vocal amplitude fed to HUD 60 FPS equalizer
                 peak = float(np.max(np.abs(indata)))
                 hud.set_audio_level(min(1.0, peak / 2500.0))
 
-    stream = sd.InputStream(
-        samplerate=SAMPLE_RATE,
-        channels=CHANNELS,
-        dtype='int16',
-        callback=audio_callback
-    )
-    stream.start()
+    def _open_audio_stream():
+        dev = CONFIG.get("mic_device")
+        kwargs = dict(samplerate=SAMPLE_RATE, channels=CHANNELS, dtype="int16", callback=audio_callback)
+        if dev is not None:
+            try:
+                s = sd.InputStream(device=dev, **kwargs)
+                s.start()
+                return s
+            except Exception as exc:
+                logging.warning(f"Configured mic device '{dev}' failed ({exc}); falling back to system default.")
+        s = sd.InputStream(**kwargs)
+        s.start()
+        return s
 
-    temp_wav = os.path.join(tempfile.gettempdir(), "whisper_flow_recording.wav")
+    stream = _open_audio_stream()
+    temp_wav = os.path.join(tempfile.gettempdir(), "hushflow_fallback_tmp.wav")
 
-    keyboard.add_hotkey('ctrl+shift+q', lambda: sys.exit(0))
+    try:
+        keyboard.add_hotkey("ctrl+shift+q", lambda: _shutdown_flag.set())
+    except Exception:
+        pass
 
     last_hud_watchdog = 0
     try:
-        while True:
+        while not _shutdown_flag.is_set():
             now_loop = time.time()
+            if _reload_mic_flag.is_set() and not is_recording:
+                _reload_mic_flag.clear()
+                try:
+                    if stream:
+                        stream.stop()
+                        stream.close()
+                    stream = _open_audio_stream()
+                    logging.info("Audio input stream reloaded cleanly.")
+                except Exception as exc:
+                    logging.warning(f"Failed reloading mic stream: {exc}")
+
             if hud and (now_loop - last_hud_watchdog > 1.0):
                 last_hud_watchdog = now_loop
                 hud.ensure_alive()
 
             hotkey_active = is_hotkey_down()
             toggle_active = is_toggle_hotkey_down()
-            esc_pressed = is_key_pressed(0x1B)  # VK_ESCAPE
+            esc_pressed = is_key_pressed(0x1B)
 
             should_stop_recording = False
 
-            # Case A: Hands-Free Dictation Toggle (Ctrl + Alt + Space)
             if toggle_active and (now_loop - last_toggle_press_time > 0.5):
                 last_toggle_press_time = now_loop
                 if not is_recording:
-                    # Enter Hands-Free Recording Mode
                     is_recording = True
                     is_hands_free = True
                     release_start_time = None
                     audio_frames = []
                     play_beep_async(1050, 70)
+                    notify_studio({"type": "state", "state": "recording"})
                     if hud:
                         hud.set_state("recording", text="Hands-Free...")
                     if tray_icon:
                         try:
                             tray_icon.icon = create_tray_icon_image("recording")
-                            tray_icon.title = "WhisperFlow - Hands-Free Dictating..."
+                            tray_icon.title = f"{APP_NAME} — Listening..."
                         except Exception:
                             pass
-                    print("[HANDS-FREE] Recording continuously... Press Ctrl+Alt+Space or Esc to finish.", flush=True)
                 else:
-                    # Finished hands-free recording
                     should_stop_recording = True
 
             elif is_hands_free:
-                # In hands-free mode, pressing Escape finishes and pastes
                 if esc_pressed and (now_loop - last_toggle_press_time > 0.3):
                     last_toggle_press_time = now_loop
                     should_stop_recording = True
 
-            # Case B: Push-to-Talk Mode (Hold Ctrl+Alt with 450ms sustained release debounce)
             elif not is_hands_free:
                 if hotkey_active:
                     release_start_time = None
                     if not is_recording:
-                        # Started pressing hotkey
                         is_recording = True
                         audio_frames = []
                         play_beep_async(900, 60)
+                        notify_studio({"type": "state", "state": "recording"})
                         if hud:
                             hud.set_state("recording")
                         if tray_icon:
                             try:
                                 tray_icon.icon = create_tray_icon_image("recording")
-                                tray_icon.title = "WhisperFlow - Recording..."
+                                tray_icon.title = f"{APP_NAME} — Listening..."
                             except Exception:
                                 pass
-                        print("[RECORDING...] Speak now...", end="\r", flush=True)
-
                 elif is_recording:
-                    # Key is NOT down right now: check release debounce window
                     if release_start_time is None:
                         release_start_time = now_loop
-
-                    # Only stop if released continuously for at least 450ms!
-                    # Prevents premature cutoffs from keyboard matrix chatter or finger shifts
                     if (now_loop - release_start_time) >= 0.45:
                         should_stop_recording = True
 
-            # Process Completed Recording
             if should_stop_recording and is_recording:
                 is_recording = False
                 is_hands_free = False
                 release_start_time = None
                 time.sleep(0.08)
                 play_beep_async(650, 60)
+                notify_studio({"type": "state", "state": "transcribing"})
                 if hud:
                     hud.set_state("transcribing")
                 if tray_icon:
                     try:
                         tray_icon.icon = create_tray_icon_image("transcribing")
-                        tray_icon.title = "WhisperFlow - Transcribing..."
+                        tray_icon.title = f"{APP_NAME} — Transcribing..."
                     except Exception:
                         pass
-                print("[PROCESSING...] Transcribing...      ", end="\r", flush=True)
 
                 if len(audio_frames) > 0:
                     audio_data = np.concatenate(audio_frames, axis=0)
@@ -778,23 +870,13 @@ def main():
                     if is_audio_silent(audio_data, duration_sec):
                         if hud:
                             hud.set_state("idle")
-                        print(f"[INFO] Audio too short or silent ({duration_sec:.2f}s), ignored.\n")
+                        notify_studio({"type": "state", "state": "idle"})
                     else:
-                        # Ultra-fast in-memory transcription directly from RAM buffer (0 disk wait)
                         raw_text = transcribe_audio(audio_data, temp_wav_path=temp_wav)
-
                         if raw_text and not is_hallucination_or_empty(raw_text):
-                            # Cache audio file for QuickFix vault
-                            try:
-                                wav.write(temp_wav, SAMPLE_RATE, audio_data)
-                            except Exception:
-                                pass
                             cleaned_text = apply_smart_cleanup(raw_text, level=CLEANUP_LEVEL, config=CONFIG)
-                            logging.info(f"Raw: '{raw_text}' -> Cleaned: '{cleaned_text}'")
-                            print(f"[RAW]: \"{raw_text}\"")
-                            print(f"[CLEANED]: \"{cleaned_text}\"")
+                            logging.info(f"Transcribed ({duration_sec:.1f}s): len={len(cleaned_text)}")
 
-                            # Capture target window details before pasting
                             target_hwnd = ctypes.windll.user32.GetForegroundWindow()
                             target_title = ""
                             try:
@@ -806,73 +888,75 @@ def main():
                             except Exception:
                                 pass
 
-                            # Keep an audio snapshot for the vault in case user corrects
-                            last_wav_snapshot = os.path.join(tempfile.gettempdir(), f"whisper_flow_last_{int(time.time())}.wav")
-                            try:
-                                import shutil
-                                shutil.copy2(temp_wav, last_wav_snapshot)
-                            except Exception:
-                                last_wav_snapshot = temp_wav
+                            # Strictly honor save_training_audio opt-in: zero temp WAV writes unless opted in
+                            last_wav_snapshot = None
+                            if CONFIG.get("save_training_audio", False):
+                                last_wav_snapshot = os.path.join(tempfile.gettempdir(), f"hushflow_last_{int(time.time())}.wav")
+                                try:
+                                    wav.write(last_wav_snapshot, SAMPLE_RATE, audio_data)
+                                except Exception:
+                                    last_wav_snapshot = None
 
                             last_dictation_event = {
                                 "text": cleaned_text,
                                 "wav_path": last_wav_snapshot,
                                 "hwnd": target_hwnd,
                                 "window_title": target_title,
-                                "timestamp": time.time()
+                                "timestamp": time.time(),
                             }
 
                             paste_text(cleaned_text, target_hwnd=target_hwnd)
+                            notify_studio({
+                                "type": "transcript",
+                                "raw": raw_text,
+                                "cleaned": cleaned_text,
+                                "ts": time.strftime("%H:%M:%S"),
+                            })
                             if hud:
-                                hud.set_state("done", text="Pasted! [Alt+Z to Fix]")
-                            print("[PASTED] Done! (Press [Alt + Z] to correct & train)\n")
+                                hud.set_state("done", text="Done")
                         else:
                             if hud:
                                 hud.set_state("idle")
-                            print("[INFO] No speech detected or blank audio.\n")
+                            notify_studio({"type": "state", "state": "idle"})
                 else:
                     if hud:
                         hud.set_state("idle")
-                    print("[INFO] No audio captured.\n")
+                    notify_studio({"type": "state", "state": "idle"})
 
                 if tray_icon:
                     try:
                         tray_icon.icon = create_tray_icon_image("idle")
-                        tray_icon.title = f"WhisperFlow - Ready ({CLEANUP_LEVEL.upper()})"
+                        tray_icon.title = f"{APP_NAME} — Ready"
                     except Exception:
                         pass
 
-                print("Status: READY - listening for hotkey...", end="\r", flush=True)
-
-            # Check for Quick-Fix Hotkey: [Alt + Z] (VK_MENU + VK_Z)
+            # Check QuickFix Hotkey [Alt + Z]
             is_alt = is_key_pressed(0x12) or is_key_pressed(0xA4) or is_key_pressed(0xA5)
             is_z = is_key_pressed(0x5A)
             if is_alt and is_z and not is_recording:
                 if last_dictation_event.get("text") and (time.time() - last_dictation_event.get("timestamp", 0) < 15.0):
                     orig_to_fix = last_dictation_event["text"]
-                    last_dictation_event["timestamp"] = 0  # Consume event to prevent re-opening
+                    last_dictation_event["timestamp"] = 0
 
                     def handle_correction_submitted(corrected_text):
                         global CONFIG
-                        learned = record_correction_and_learn(last_dictation_event, corrected_text, CONFIG_FILE)
-                        CONFIG = get_config()  # Hot-reload updated vocabulary & mappings into RAM
-                        lbl = f"Learned: {learned[0]}" if learned else "Model Updated!"
+                        learned = record_correction_and_learn(last_dictation_event, corrected_text, CONFIG_PATH)
+                        CONFIG = load_config()
+                        lbl = f"Learned: {learned[0]}" if learned else "Lexicon Updated"
                         if hud:
                             hud.set_state("done", text=lbl)
-                        print(f"[LEARNED] Ground truth saved: '{orig_to_fix}' -> '{corrected_text}'")
+                        notify_studio({"type": "lexicon_updated"})
 
                     spawn_quick_fix(orig_to_fix, handle_correction_submitted)
                     time.sleep(0.35)
 
             time.sleep(0.016)
 
-    except (KeyboardInterrupt, SystemExit) as e:
-        logging.info(f"WhisperFlow caught exit: {type(e).__name__}")
-        print("\nExiting WhisperFlow...")
+    except (KeyboardInterrupt, SystemExit):
+        logging.info("HushFlow exiting cleanly.")
     except Exception as e:
-        logging.exception(f"WhisperFlow unexpected error: {e}")
+        logging.exception(f"HushFlow unexpected error: {e}")
     finally:
-        logging.info("WhisperFlow cleanup and shutdown")
         cleanup_pid()
         cleanup_server()
         if hud:
@@ -883,18 +967,23 @@ def main():
             except Exception:
                 pass
         if stream is not None:
-            stream.stop()
-            stream.close()
+            try:
+                stream.stop()
+                stream.close()
+            except Exception:
+                pass
         if os.path.exists(temp_wav):
             try:
                 os.remove(temp_wav)
             except Exception:
                 pass
 
+
 if __name__ == "__main__":
     try:
         main()
-    except Exception as e:
+    except Exception:
         import traceback
-        with open(os.path.join(BASE_DIR, "error.log"), "w", encoding="utf-8") as f:
+        os.makedirs(os.path.dirname(MAIN_LOG_FILE), exist_ok=True)
+        with open(os.path.join(os.path.dirname(MAIN_LOG_FILE), "error.log"), "w", encoding="utf-8") as f:
             f.write(traceback.format_exc())

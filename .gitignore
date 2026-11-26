@@ -17,3 +17,8 @@ venv/
 # Binary model files & training vault
 *.bin
 vault/
+
+# Packaging build artifacts (distributed via Releases, not raw git blobs)
+/build/
+/dist/
+packaging/Output/

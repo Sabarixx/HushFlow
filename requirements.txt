@@ -8,3 +8,5 @@ Pillow>=9.5.0
 pystray>=0.19.4
 psutil>=5.9.0
 pywin32>=306
+customtkinter>=5.2.0
+darkdetect>=0.8.0

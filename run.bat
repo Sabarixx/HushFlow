@@ -1,3 +1,3 @@
 @echo off
 cd /d "%~dp0"
-start "" pythonw.exe "%~dp0whisper_flow.py"
+start "" pythonw.exe "%~dp0hushflow_main.py" --engine

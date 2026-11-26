@@ -1,7 +1,7 @@
 """
-Smart Speech Cleanup & Self-Correction Engine for WhisperFlow (Enhanced Tier)
-Replicates and enhances Wispr Flow's auto-cleanup, filler-removal, and intent-resolution.
-Guarantees zero speech truncation and zero false-positive dropouts.
+Smart Speech Cleanup & Self-Correction Engine for HushFlow
+Handles filler removal, spoken formatting, contextual homophones,
+retraction guards, and user-defined lexicon replacements.
 """
 
 import re

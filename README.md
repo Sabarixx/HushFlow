@@ -64,8 +64,8 @@
   </tr>
   <tr>
     <td colspan="2" valign="top">
-      <h4>🎮 HushFlow Studio (Standalone Control Center & ML Dashboard)</h4>
-      <p>Brand new dedicated desktop control application featuring the prominent HushFlow logo, 1-click <b>Start / Stop engine</b> process lifecycle, live microphone VU volume meter, interactive dictation scratchpad, and complete visual management of your acoustic self-learning rules vault.</p>
+      <h4>🎮 HushFlow Studio (Standalone Windows App & Installer)</h4>
+      <p>Compiled standalone <code>HushFlow.exe</code> + Windows Setup wizard (<code>%LocalAppData%\Programs\HushFlow</code>) featuring crisp 4&times; supersampled brand assets, 3-step privacy &amp; model onboarding, live hardware-detected telemetry, on-demand mic calibration, <b>Start / Stop engine</b> controls, and full in-app Settings &amp; Custom Lexicon management.</p>
     </td>
   </tr>
 </table>
@@ -144,34 +144,26 @@ flowchart TD
 
 ---
 
-## 🚀 Quick Start (1-Click Installation)
+## 🚀 Quick Start (Installation)
 
-### Option 1: Automated 1-Click Setup (Recommended)
+### Option 1: Standalone Windows Installer (Recommended for End Users)
 
-1. [**Download HushFlow ZIP**](https://github.com/sabarixx/HushFlow/archive/refs/heads/main.zip) and extract it to any folder (e.g. `C:\Tools\HushFlow`).
-2. Double-click **`install.bat`**.
-   - Validates Python 3.10+.
-   - Installs required lightweight packages (`sounddevice`, `numpy`, `pywin32`, `requests`).
-   - Downloads the pre-quantized `ggml-small.en-q5_1.bin` model binary (~190 MB).
-   - Generates a **Start HushFlow (Local AI)** shortcut directly on your Windows Desktop.
-3. Hold **`Ctrl + Alt`** to speak &rarr; release &rarr; your dictation is instantly typed!
-   - Or press **`Ctrl + Alt + Space`** for continuous hands-free dictation.
+1. Run **`HushFlow-Setup-2.1.0.exe`** (built via `packaging/build_installer.ps1` + Inno Setup 6).
+   - Installs standalone `HushFlow.exe` into `%LocalAppData%\Programs\HushFlow\` (no Python installation or CMD windows required).
+   - Registers **HushFlow** in Windows **Settings &rarr; Installed Apps** with clean uninstaller and Desktop / Start Menu shortcuts.
+   - Opens a 3-step onboarding wizard to verify privacy preferences, calibrate your microphone, and fetch the GGML speech model if not yet cached.
+2. Hold **`Ctrl + Alt`** (or `Right Alt` / `Win + Alt` in Settings) anywhere in Windows &rarr; speak &rarr; release &rarr; your dictation is instantly typed!
 
-### Option 2: Manual Terminal Setup
+### Option 2: Automated Developer / Source Setup
+
+1. [**Download HushFlow ZIP**](https://github.com/sabarixx/HushFlow/archive/refs/heads/main.zip) or clone: `git clone https://github.com/Sabarixx/HushFlow.git`
+2. Double-click **`install.bat`** (validates Python 3.10+, installs dependencies from `requirements.txt`, generates crisp assets, and opens **HushFlow Studio**).
+
+### Option 3: Build Standalone Executable & Installer Yourself
 
 ```powershell
-# 1. Clone the repository
-git clone https://github.com/Sabarixx/HushFlow.git
-cd HushFlow
-
-# 2. Install requirements
-pip install -r requirements.txt
-
-# 3. Download the default quantized model
-powershell -Command "Invoke-WebRequest -Uri 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.en-q5_1.bin' -OutFile 'ggml-small.en-q5_1.bin'"
-
-# 4. Launch HushFlow in background
-pythonw.exe whisper_flow.py
+# Builds dist\HushFlow\HushFlow.exe and dist\HushFlow-Setup-2.1.0.exe (+ CHECKSUMS.txt)
+powershell -ExecutionPolicy Bypass -File packaging\build_installer.ps1
 ```
 
 ---
@@ -206,9 +198,9 @@ HushFlow comes equipped with built-in natural language voice formatting:
 
 ---
 
-## ⚙️ Configuration (`whisper_flow_config.json`)
+## ⚙️ Configuration & User Data (`%LocalAppData%\HushFlow\config.json`)
 
-Fine-tune hotkeys, AI models, cleanup aggressiveness, and domain-specific technical vocabulary:
+User configuration, models (`models/`), optional training vault (`vault/`), and logs (`logs/`) live cleanly inside `%LocalAppData%\HushFlow\` and are configured visually inside **HushFlow Studio &rarr; Settings**:
 
 ```json
 {
@@ -217,19 +209,15 @@ Fine-tune hotkeys, AI models, cleanup aggressiveness, and domain-specific techni
   "model": "small.en-q5_1",
   "cleanup_level": "medium",
   "hud_visible": true,
-  "dock_y": 360,
+  "save_training_audio": false,
   "custom_vocabulary": [
-    "Antigravity",
+    "HushFlow",
     "PowerShell",
     "FastAPI",
-    "Python",
-    "Git",
-    "Kubernetes",
-    "Docker",
-    "PostgreSQL"
+    "Python"
   ],
   "word_replacements": {
-    "repo": "repository"
+    "antiravity": "Antigravity"
   }
 }
 ```
@@ -247,7 +235,8 @@ Fine-tune hotkeys, AI models, cleanup aggressiveness, and domain-specific techni
 ## 🔒 Security & Air-Gapped Assurance
 
 - **Zero Cloud Connections:** Audio stays exclusively in RAM and is processed locally by `whisper-server.exe` on loopback `127.0.0.1:8080`.
-- **Zero Disk Audio Stash:** Audio frames are never saved to disk as temporary `.wav` files.
+- **Opt-In Local Vault Only:** By default (`"save_training_audio": false`), temporary `.wav` clips are **never saved on disk**. Enable training clips explicitly in Settings, or purge them anytime with one click.
+- **On-Demand Mic Control:** HushFlow Studio never holds the microphone open while idle; the Windows mic privacy indicator activates only during dictation or when you click **Test Microphone**.
 - **Non-Destructive Clipboard:** Clipboard contents before dictation are snapshotted and safely restored within 500ms after text injection.
 - **Zero Telemetry:** No analytics, pingbacks, or background network calls of any kind.
 

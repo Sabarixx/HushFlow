@@ -1,22 +1,15 @@
 """
-DesktopHUD - High-Resolution 60 FPS Native Layered Floating Widget for WhisperFlow
-Replicates Wispr Flow's left-edge docked pill:
+DesktopHUD - 3x Supersampled 60 FPS Native Layered Floating Pill for HushFlow
 - Native Windows 32-bit ARGB Layered Window (UpdateLayeredWindow)
-- Per-Monitor V2 DPI awareness (zero scaling blur on 125%/150% laptop screens)
-- Topmost window positioning (HWND_TOPMOST) with active Z-order enforcement
-- Dynamic Screen Work Area Clamping (SPI_GETWORKAREA): Never slips under taskbar or off-screen
-- Anti-Alt-Tab Resistance: Retains topmost priority across all app/desktop switches
-- Self-Healing Watchdog: Automatically recreates or restores window if ever closed/hidden
-- Thread-Safe Architecture: Dedicated GUI thread handles all window creation and message dispatch
-- 60 FPS silky smooth pulse, waveform, and spinner animations
-- Vertically draggable along screen edge with persistent position
+- 3x supersampled RGBA rendering downsampled via LANCZOS for razor-sharp anti-aliased curves & text
+- Per-Monitor V2 DPI awareness (zero scaling blur on 125%/150% displays)
+- HWND_TOPMOST Z-order enforcement + SPI_GETWORKAREA screen clamping
+- Smooth expand on hover, real-time 5-bar waveform modulation, draggable dock position
 """
 
 import os
-import sys
 import time
 import math
-import json
 import threading
 import ctypes
 from ctypes import wintypes
@@ -26,6 +19,8 @@ import win32api
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
+from app_paths import load_config, save_config
+
 # Set Per-Monitor DPI Awareness before creating any windows
 try:
     ctypes.windll.shcore.SetProcessDpiAwareness(2)
@@ -34,6 +29,9 @@ except Exception:
         ctypes.windll.user32.SetProcessDPIAware()
     except Exception:
         pass
+
+RENDER_SCALE = 3
+
 
 class BITMAPINFOHEADER(ctypes.Structure):
     _fields_ = [
@@ -50,6 +48,7 @@ class BITMAPINFOHEADER(ctypes.Structure):
         ("biClrImportant", wintypes.DWORD),
     ]
 
+
 class BLENDFUNCTION(ctypes.Structure):
     _fields_ = [
         ("BlendOp", ctypes.c_byte),
@@ -57,6 +56,7 @@ class BLENDFUNCTION(ctypes.Structure):
         ("SourceConstantAlpha", ctypes.c_byte),
         ("AlphaFormat", ctypes.c_byte),
     ]
+
 
 def get_screen_work_area():
     """Retrieve true desktop work area excluding Windows taskbars and docked appbars."""
@@ -68,6 +68,7 @@ def get_screen_work_area():
         w = win32api.GetSystemMetrics(win32con.SM_CXSCREEN)
         h = win32api.GetSystemMetrics(win32con.SM_CYSCREEN)
         return 0, 0, w, h
+
 
 class DesktopHUD:
     def __init__(self, config_path=None, visible=True):
@@ -83,11 +84,11 @@ class DesktopHUD:
 
         # Base dimensions (HiDPI native)
         self.collapsed_w = 46
-        self.expanded_w = 230
+        self.expanded_w = 236
         self.current_w = float(self.collapsed_w)
         self.target_w = float(self.collapsed_w)
-        self.h = 44
-        self.x = 0
+        self.h = 42
+        self.x = 4
         self.y = self._load_dock_y()
 
         self.anim_tick = 0
@@ -101,11 +102,16 @@ class DesktopHUD:
         self.audio_level = 0.0
         self.smooth_audio_level = 0.0
 
+        # Fonts rendered at RENDER_SCALE (3x) so text downscales crisply
         try:
-            self.font_main = ImageFont.truetype("segoeuib.ttf", 13)
-            self.font_badge = ImageFont.truetype("segoeuib.ttf", 10)
+            self.font_main = ImageFont.truetype("segoeuib.ttf", 13 * RENDER_SCALE)
+            self.font_badge = ImageFont.truetype("segoeuib.ttf", 10 * RENDER_SCALE)
         except Exception:
-            self.font_main = self.font_badge = ImageFont.load_default()
+            try:
+                self.font_main = ImageFont.truetype("segoeui.ttf", 13 * RENDER_SCALE)
+                self.font_badge = ImageFont.truetype("segoeui.ttf", 10 * RENDER_SCALE)
+            except Exception:
+                self.font_main = self.font_badge = ImageFont.load_default()
 
         # Start native window thread
         self.thread = threading.Thread(target=self._window_thread, daemon=True)
@@ -113,39 +119,24 @@ class DesktopHUD:
         self.ready_event.wait(timeout=2.0)
 
     def _get_safe_y(self, val):
-        """Clamp Y strictly inside the visible desktop work area (never off-screen or under taskbar)."""
+        """Clamp Y strictly inside the visible desktop work area."""
         _, top, _, bottom = get_screen_work_area()
         min_y = top + 10
         max_y = max(min_y, bottom - self.h - 10)
         if val is None or val > max_y or val < min_y:
-            # Safe default: ~35% down the screen, comfortably above the taskbar
             return max(min_y, min(max_y, top + int((bottom - top) * 0.35)))
         return val
 
     def _load_dock_y(self):
-        val = 360
-        if self.config_path and os.path.exists(self.config_path):
-            try:
-                with open(self.config_path, "r", encoding="utf-8") as f:
-                    cfg = json.load(f)
-                    if "dock_y" in cfg:
-                        val = int(cfg["dock_y"])
-            except Exception:
-                pass
+        cfg = load_config()
+        val = int(cfg.get("dock_y", 360))
         return self._get_safe_y(val)
 
     def _save_dock_y(self):
         self.y = self._get_safe_y(self.y)
-        if self.config_path and os.path.exists(self.config_path):
-            try:
-                with open(self.config_path, "r+", encoding="utf-8") as f:
-                    cfg = json.load(f)
-                    cfg["dock_y"] = int(self.y)
-                    f.seek(0)
-                    f.truncate()
-                    json.dump(cfg, f, indent=2)
-            except Exception:
-                pass
+        cfg = load_config()
+        cfg["dock_y"] = int(self.y)
+        save_config(cfg)
 
     def _wnd_proc(self, hwnd, msg, wparam, lparam):
         if msg == win32con.WM_LBUTTONDOWN:
@@ -158,8 +149,7 @@ class DesktopHUD:
         elif msg == win32con.WM_MOUSEMOVE:
             if self.is_dragging:
                 cursor_y = win32api.GetCursorPos()[1]
-                new_y = cursor_y - self.drag_offset_y
-                self.y = self._get_safe_y(new_y)
+                self.y = self._get_safe_y(cursor_y - self.drag_offset_y)
             return 0
 
         elif msg == win32con.WM_LBUTTONUP:
@@ -170,10 +160,9 @@ class DesktopHUD:
             return 0
 
         elif msg == win32con.WM_CLOSE:
-            # Block WM_CLOSE so Alt+F4 or window managers cannot close the HUD!
             return 0
 
-        elif msg in (win32con.WM_DISPLAYCHANGE, 0x02E0):  # 0x02E0 = WM_DPICHANGED
+        elif msg in (win32con.WM_DISPLAYCHANGE, 0x02E0):  # WM_DPICHANGED
             self.y = self._get_safe_y(self.y)
             return 0
 
@@ -191,7 +180,7 @@ class DesktopHUD:
 
             wc = win32gui.WNDCLASS()
             wc.lpfnWndProc = self._wnd_proc
-            wc.lpszClassName = "WhisperFlow_Pro_HUD_Class_V2"
+            wc.lpszClassName = "HushFlow_Layered_HUD_V2"
             wc.hInstance = win32api.GetModuleHandle(None)
             wc.hCursor = win32gui.LoadCursor(0, win32con.IDC_ARROW)
             try:
@@ -199,19 +188,27 @@ class DesktopHUD:
             except Exception:
                 pass
 
-            ex_style = (win32con.WS_EX_LAYERED | 
-                        win32con.WS_EX_TOPMOST | 
-                        win32con.WS_EX_TOOLWINDOW | 
-                        win32con.WS_EX_NOACTIVATE)
+            ex_style = (
+                win32con.WS_EX_LAYERED
+                | win32con.WS_EX_TOPMOST
+                | win32con.WS_EX_TOOLWINDOW
+                | win32con.WS_EX_NOACTIVATE
+            )
             style = win32con.WS_POPUP
 
             self.hwnd = win32gui.CreateWindowEx(
                 ex_style,
-                "WhisperFlow_Pro_HUD_Class_V2",
-                "WhisperFlow HUD",
+                "HushFlow_Layered_HUD_V2",
+                "HushFlow HUD",
                 style,
-                self.x, self.y, self.expanded_w, self.h,
-                0, 0, wc.hInstance, None
+                self.x,
+                self.y,
+                self.expanded_w,
+                self.h,
+                0,
+                0,
+                wc.hInstance,
+                None,
             )
 
             try:
@@ -224,8 +221,11 @@ class DesktopHUD:
                 win32gui.SetWindowPos(
                     self.hwnd,
                     win32con.HWND_TOPMOST,
-                    self.x, self.y, int(self.current_w), self.h,
-                    win32con.SWP_NOACTIVATE | win32con.SWP_SHOWWINDOW
+                    self.x,
+                    self.y,
+                    int(self.current_w),
+                    self.h,
+                    win32con.SWP_NOACTIVATE | win32con.SWP_SHOWWINDOW,
                 )
 
     def _window_thread(self):
@@ -242,30 +242,27 @@ class DesktopHUD:
                     self.anim_tick += 1
 
                     if self.state == "done" and self.done_timestamp > 0:
-                        if now - self.done_timestamp > 1.2:
+                        if now - self.done_timestamp > 1.35:
                             self.state = "idle"
                             self.custom_text = None
                             self.done_timestamp = 0
 
-                    # Smooth audio amplitude decay for silky 60 FPS equalizer
                     self.smooth_audio_level += (self.audio_level - self.smooth_audio_level) * 0.35
-                    # Passive decay if no audio update received
                     self.audio_level *= 0.85
 
-                    # Real-time cursor polling for instant hover expand & collapse
                     if not self.is_dragging:
                         try:
                             cursor_x, cursor_y = win32api.GetCursorPos()
                             self.is_hovered = (
-                                self.x <= cursor_x <= (self.x + int(self.current_w) + 2) and
-                                self.y <= cursor_y <= (self.y + self.h)
+                                self.x <= cursor_x <= (self.x + int(self.current_w) + 4)
+                                and self.y <= cursor_y <= (self.y + self.h)
                             )
                         except Exception:
                             pass
                     else:
                         self.is_hovered = True
 
-                    should_expand = self.is_hovered or (self.state in ["recording", "transcribing", "done"])
+                    should_expand = self.is_hovered or (self.state in ("recording", "transcribing", "done"))
                     self.target_w = float(self.expanded_w if should_expand else self.collapsed_w)
 
                     self.current_w += (self.target_w - self.current_w) * 0.28
@@ -273,7 +270,6 @@ class DesktopHUD:
                         self.current_w = self.target_w
 
                     if self.visible:
-                        # Auto-heal: If window was flagged for recreate or destroyed, restore on GUI thread!
                         if self._request_recreate or not self.hwnd or not win32gui.IsWindow(self.hwnd):
                             self._request_recreate = False
                             self._create_or_restore_window()
@@ -283,23 +279,29 @@ class DesktopHUD:
                                 self._render_and_update()
                                 w_current = max(self.collapsed_w, int(round(self.current_w)))
 
-                                # Re-assert HWND_TOPMOST periodically so Alt+Tab, Chrome, Claude, or CLI
-                                # never push the HUD behind active windows!
-                                reassert_topmost = (now - self.last_topmost_reassert > 0.3)
-                                if reassert_topmost:
+                                if now - self.last_topmost_reassert > 0.3:
                                     self.last_topmost_reassert = now
                                     win32gui.SetWindowPos(
                                         self.hwnd,
                                         win32con.HWND_TOPMOST,
-                                        self.x, self.y, w_current, self.h,
-                                        win32con.SWP_NOACTIVATE | win32con.SWP_SHOWWINDOW
+                                        self.x,
+                                        self.y,
+                                        w_current,
+                                        self.h,
+                                        win32con.SWP_NOACTIVATE | win32con.SWP_SHOWWINDOW,
                                     )
                                 else:
                                     win32gui.SetWindowPos(
                                         self.hwnd,
                                         0,
-                                        self.x, self.y, w_current, self.h,
-                                        win32con.SWP_NOACTIVATE | win32con.SWP_NOMOVE | win32con.SWP_NOZORDER | win32con.SWP_NOREDRAW
+                                        self.x,
+                                        self.y,
+                                        w_current,
+                                        self.h,
+                                        win32con.SWP_NOACTIVATE
+                                        | win32con.SWP_NOMOVE
+                                        | win32con.SWP_NOZORDER
+                                        | win32con.SWP_NOREDRAW,
                                     )
                             except Exception:
                                 pass
@@ -319,93 +321,149 @@ class DesktopHUD:
             except Exception:
                 pass
 
+    def _draw_mini_wave_emblem(self, d: ImageDraw.ImageDraw, cx: float, cy: float, s: int, color_main, color_accent):
+        """Draw crisp 5-bar HushFlow icon centered at (cx, cy) on scaled canvas."""
+        bar_w = 2.1 * s
+        gap = 1.8 * s
+        heights = [5.0 * s, 10.0 * s, 13.0 * s, 8.0 * s, 4.5 * s]
+        total_w = len(heights) * bar_w + (len(heights) - 1) * gap
+        sx = cx - total_w / 2
+        for i, bh in enumerate(heights):
+            bx0 = sx + i * (bar_w + gap)
+            by0 = cy - bh / 2
+            by1 = cy + bh / 2
+            col = color_accent if i == 3 else color_main
+            d.rounded_rectangle((bx0, by0, bx0 + bar_w, by1), radius=bar_w / 2, fill=col)
+
     def _render_and_update(self):
         if not self.hwnd or not win32gui.IsWindow(self.hwnd):
             return
 
         w = max(self.collapsed_w, int(round(self.current_w)))
         h = self.h
+        s = RENDER_SCALE
+        sw, sh = w * s, h * s
 
-        img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
-        d = ImageDraw.Draw(img)
+        hi = Image.new("RGBA", (sw, sh), (0, 0, 0, 0))
+        d = ImageDraw.Draw(hi)
 
-        # Outer Soft Drop Shadow
-        for offset in range(1, 4):
-            shadow_alpha = int(30 / offset)
+        # Diffused multi-pass outer shadow
+        for offset in range(1, 3):
+            ox = offset * s
             d.rounded_rectangle(
-                (offset, offset, w - offset, h - offset),
-                radius=19,
+                (ox, ox, sw - ox, sh - ox),
+                radius=19 * s,
                 fill=None,
-                outline=(0, 0, 0, shadow_alpha),
-                width=1
+                outline=(0, 0, 0, int(42 / offset)),
+                width=s,
             )
 
-        # Obsidian Pill Body (#161618 with 1px border)
-        bg_color = (22, 22, 24, 250)
-        border_color = (60, 60, 65, 255)
-        d.rounded_rectangle((2, 2, w - 2, h - 2), radius=19, fill=bg_color, outline=border_color, width=1)
+        # Smooth executive dark obsidian pill with subtle slate hairline border
+        pad = 2 * s
+        bg_color = (16, 20, 30, 248)
+        if self.state == "recording":
+            border_color = (239, 68, 68, 220)
+        elif self.state == "transcribing":
+            border_color = (245, 158, 11, 210)
+        elif self.state == "done":
+            border_color = (52, 211, 153, 220)
+        else:
+            border_color = (44, 54, 78, 235)
 
-        cx, cy = 22, 22
+        d.rounded_rectangle((pad, pad, sw - pad, sh - pad), radius=18 * s, fill=bg_color, outline=border_color, width=s)
+
+        cx = 23 * s
+        cy = (h / 2.0) * s
 
         if self.state == "recording":
-            pulse_rad = 12 + int(3 * math.sin(self.anim_tick * 0.15))
-            glow_alpha = int(140 + 70 * math.sin(self.anim_tick * 0.15))
-            d.ellipse((cx - pulse_rad, cy - pulse_rad, cx + pulse_rad, cy + pulse_rad), outline=(239, 68, 68, glow_alpha), width=2)
-            d.ellipse((cx - 5, cy - 5, cx + 5, cy + 5), fill=(239, 68, 68, 255))
+            pulse_rad = (10.5 + 2.2 * math.sin(self.anim_tick * 0.16)) * s
+            glow_alpha = int(110 + 70 * math.sin(self.anim_tick * 0.16))
+            d.ellipse(
+                (cx - pulse_rad, cy - pulse_rad, cx + pulse_rad, cy + pulse_rad),
+                outline=(239, 68, 68, glow_alpha),
+                width=int(1.8 * s),
+            )
+            r_dot = 4.5 * s
+            d.ellipse((cx - r_dot, cy - r_dot, cx + r_dot, cy + r_dot), fill=(239, 68, 68, 255))
 
         elif self.state == "transcribing":
-            d.ellipse((cx - 11, cy - 11, cx + 11, cy + 11), outline=(60, 50, 20, 200), width=2)
+            r_ring = 9.5 * s
+            d.ellipse((cx - r_ring, cy - r_ring, cx + r_ring, cy + r_ring), outline=(60, 48, 24, 210), width=int(1.8 * s))
             spin_rad = self.anim_tick * 0.18
             for dot_i in range(3):
-                da = spin_rad + dot_i * 0.4
-                sx = cx + int(8 * math.cos(da))
-                sy = cy + int(8 * math.sin(da))
-                dot_alpha = 255 - dot_i * 60
-                d.ellipse((sx - 2, sy - 2, sx + 2, sy + 2), fill=(245, 158, 11, dot_alpha))
+                da = spin_rad + dot_i * 0.48
+                dx = cx + 7.5 * s * math.cos(da)
+                dy = cy + 7.5 * s * math.sin(da)
+                dr = 2.0 * s
+                d.ellipse((dx - dr, dy - dr, dx + dr, dy + dr), fill=(245, 158, 11, 255 - dot_i * 65))
 
         elif self.state == "done":
-            d.ellipse((cx - 10, cy - 10, cx + 10, cy + 10), fill=(16, 185, 129, 255))
-            d.line((cx - 4, cy, cx - 1, cy + 3), fill=(10, 10, 12, 255), width=2)
-            d.line((cx - 1, cy + 3, cx + 4, cy - 3), fill=(10, 10, 12, 255), width=2)
+            r_ok = 9.5 * s
+            d.ellipse((cx - r_ok, cy - r_ok, cx + r_ok, cy + r_ok), fill=(16, 185, 129, 255))
+            d.line(
+                (cx - 4 * s, cy, cx - 1 * s, cy + 3 * s),
+                fill=(10, 14, 20, 255),
+                width=int(2.2 * s),
+            )
+            d.line(
+                (cx - 1 * s, cy + 3 * s, cx + 4.5 * s, cy - 3.5 * s),
+                fill=(10, 14, 20, 255),
+                width=int(2.2 * s),
+            )
 
         else:
-            # Idle: Bright Ivory / Cyan Concentric Rings (distinctive WhisperFlow icon)
-            d.ellipse((cx - 11, cy - 11, cx + 11, cy + 11), outline=(56, 189, 248, 200), width=2)
-            d.ellipse((cx - 5, cy - 5, cx + 5, cy + 5), fill=(255, 255, 240, 255))
+            # Crisp mini HushFlow soundwave mark (zero bullseye rings)
+            self._draw_mini_wave_emblem(
+                d, cx, cy, s,
+                color_main=(241, 245, 249, 255),
+                color_accent=(52, 211, 153, 255),
+            )
 
-        if w > 100:
-            text_x = 46
+        if w > 105:
+            text_x = 46 * s
             if self.state == "recording":
-                d.text((text_x, 13), self.custom_text or "Listening...", fill=(239, 68, 68, 255), font=self.font_main)
-                wave_start_x = w - 65
-                # Live dynamic audio bars modulated by real vocal amplitude
+                label = self.custom_text or "Listening..."
+                d.text((text_x, 12 * s), label, fill=(248, 250, 252, 255), font=self.font_main)
+                wave_start_x = (w - 60) * s
                 for bi in range(5):
                     phase = math.sin(self.anim_tick * 0.22 + bi * 0.85)
-                    energy = max(0.12, min(1.0, self.smooth_audio_level * (0.65 + 0.35 * abs(phase))))
-                    bar_h = int(3 + 12 * energy)
-                    bar_x = wave_start_x + bi * 7
-                    d.rounded_rectangle((bar_x, cy - bar_h, bar_x + 3, cy + bar_h), radius=2, fill=(239, 68, 68, 255))
+                    energy = max(0.14, min(1.0, self.smooth_audio_level * (0.65 + 0.35 * abs(phase))))
+                    bar_h = (2.8 + 10.5 * energy) * s
+                    bx = wave_start_x + bi * 7 * s
+                    d.rounded_rectangle(
+                        (bx, cy - bar_h, bx + 3.0 * s, cy + bar_h),
+                        radius=int(1.5 * s),
+                        fill=(239, 68, 68, 245),
+                    )
 
             elif self.state == "transcribing":
-                d.text((text_x, 13), self.custom_text or "Transcribing...", fill=(245, 158, 11, 255), font=self.font_main)
-                # Sleek animated glowing progress dots
-                dot_start_x = w - 50
+                d.text((text_x, 12 * s), self.custom_text or "Transcribing...", fill=(253, 230, 138, 255), font=self.font_main)
+                dot_start_x = (w - 48) * s
                 for di in range(3):
                     dphase = math.sin(self.anim_tick * 0.25 - di * 0.8)
                     dalpha = int(120 + 135 * max(0, dphase))
-                    drad = 3 + int(1.5 * max(0, dphase))
-                    dx = dot_start_x + di * 12
+                    drad = (2.6 + 1.2 * max(0, dphase)) * s
+                    dx = dot_start_x + di * 11 * s
                     d.ellipse((dx - drad, cy - drad, dx + drad, cy + drad), fill=(245, 158, 11, dalpha))
 
             elif self.state == "done":
-                d.text((text_x, 13), self.custom_text or "Pasted!", fill=(16, 185, 129, 255), font=self.font_main)
+                d.text((text_x, 12 * s), self.custom_text or "Done", fill=(167, 243, 208, 255), font=self.font_main)
 
             else:
-                d.text((text_x, 13), "Dictate", fill=(255, 255, 240, 255), font=self.font_main)
-                kw, kh = 80, 22
-                kx, ky = w - kw - 12, (h - kh) // 2
-                d.rounded_rectangle((kx, ky, kx + kw, ky + kh), radius=6, fill=(38, 38, 44, 255), outline=(58, 58, 66, 255), width=1)
-                d.text((kx + 8, ky + 4), "Ctrl + Alt", fill=(215, 215, 210, 255), font=self.font_badge)
+                d.text((text_x, 12 * s), "HushFlow", fill=(241, 245, 249, 255), font=self.font_main)
+                kw, kh = 76 * s, 21 * s
+                kx, ky = (w * s) - kw - 12 * s, (sh - kh) // 2
+                d.rounded_rectangle(
+                    (kx, ky, kx + kw, ky + kh),
+                    radius=6 * s,
+                    fill=(26, 33, 48, 255),
+                    outline=(48, 60, 86, 255),
+                    width=s,
+                )
+                d.text((kx + 11 * s, ky + 4 * s), "Ctrl + Alt", fill=(203, 213, 225, 255), font=self.font_badge)
+
+        # Downsample 3x canvas via LANCZOS to exact target dimensions
+        img = hi.resize((w, h), Image.Resampling.LANCZOS)
 
         arr = np.array(img, dtype=np.uint8)
         r = arr[:, :, 0].astype(np.uint32)
@@ -443,12 +501,7 @@ class DesktopHUD:
 
             p_bits = ctypes.c_void_p()
             hbmp = ctypes.windll.gdi32.CreateDIBSection(
-                hdc_mem,
-                ctypes.byref(bmi),
-                0,
-                ctypes.byref(p_bits),
-                None,
-                0
+                hdc_mem, ctypes.byref(bmi), 0, ctypes.byref(p_bits), None, 0
             )
 
             if not hbmp or not p_bits.value:
@@ -476,7 +529,7 @@ class DesktopHUD:
                 ctypes.byref(pt_src),
                 0,
                 ctypes.byref(blend),
-                2  # ULW_ALPHA
+                2,  # ULW_ALPHA
             )
         finally:
             if old_bmp:
@@ -501,16 +554,12 @@ class DesktopHUD:
                     pass
 
     def ensure_alive(self):
-        """Active watchdog called by main loop to guarantee window and thread stay alive."""
+        """Active watchdog called by main loop to keep window & GUI thread healthy."""
         if not self.running:
             return
-
-        # Ensure thread is alive
         if not self.thread or not self.thread.is_alive():
             self.thread = threading.Thread(target=self._window_thread, daemon=True)
             self.thread.start()
-
-        # Signal GUI thread to recreate window if invalid
         if self.visible:
             if not self.hwnd or not win32gui.IsWindow(self.hwnd):
                 self._request_recreate = True
@@ -519,8 +568,11 @@ class DesktopHUD:
                     win32gui.SetWindowPos(
                         self.hwnd,
                         win32con.HWND_TOPMOST,
-                        self.x, self.y, int(self.current_w), self.h,
-                        win32con.SWP_NOACTIVATE | win32con.SWP_SHOWWINDOW
+                        self.x,
+                        self.y,
+                        int(self.current_w),
+                        self.h,
+                        win32con.SWP_NOACTIVATE | win32con.SWP_SHOWWINDOW,
                     )
                 except Exception:
                     pass
@@ -534,14 +586,16 @@ class DesktopHUD:
         self.custom_text = text
         if state == "done":
             self.done_timestamp = time.time()
-        # Immediately re-assert topmost on state transition
         if self.visible and self.hwnd and win32gui.IsWindow(self.hwnd):
             try:
                 win32gui.SetWindowPos(
                     self.hwnd,
                     win32con.HWND_TOPMOST,
-                    self.x, self.y, int(self.current_w), self.h,
-                    win32con.SWP_NOACTIVATE | win32con.SWP_SHOWWINDOW
+                    self.x,
+                    self.y,
+                    int(self.current_w),
+                    self.h,
+                    win32con.SWP_NOACTIVATE | win32con.SWP_SHOWWINDOW,
                 )
             except Exception:
                 pass
@@ -555,8 +609,11 @@ class DesktopHUD:
                 win32gui.SetWindowPos(
                     self.hwnd,
                     win32con.HWND_TOPMOST,
-                    self.x, self.y, int(self.current_w), self.h,
-                    win32con.SWP_NOACTIVATE | win32con.SWP_SHOWWINDOW
+                    self.x,
+                    self.y,
+                    int(self.current_w),
+                    self.h,
+                    win32con.SWP_NOACTIVATE | win32con.SWP_SHOWWINDOW,
                 )
 
     def close(self):
