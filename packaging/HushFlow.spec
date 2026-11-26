@@ -1,39 +1,52 @@
 # -*- mode: python ; coding: utf-8 -*-
 import os
-from PyInstaller.utils.hooks import collect_data_files
+from PyInstaller.utils.hooks import collect_all, collect_data_files
 
 SPEC_DIR = os.path.dirname(os.path.abspath(SPEC))
 ROOT_DIR = os.path.dirname(SPEC_DIR)
 
+wv_datas, wv_bins, wv_hidden = collect_all("webview")
+pn_datas, pn_bins, pn_hidden = collect_all("pythonnet")
+cl_datas, cl_bins, cl_hidden = collect_all("clr_loader")
 ctk_datas = collect_data_files("customtkinter")
 
-datas = ctk_datas + [
+datas = ctk_datas + wv_datas + pn_datas + cl_datas + [
     (os.path.join(ROOT_DIR, "assets", "hushflow.ico"), "assets"),
     (os.path.join(ROOT_DIR, "assets", "hushflow_logo.png"), "assets"),
     (os.path.join(ROOT_DIR, "whisper_flow.ico"), "."),
 ]
 
-binaries = [
+binaries = wv_bins + pn_bins + cl_bins + [
     (os.path.join(ROOT_DIR, "bin", "whisper-server.exe"), "bin"),
     (os.path.join(ROOT_DIR, "bin", "whisper-cli.exe"), "bin"),
 ]
 
-hiddenimports = [
-    "customtkinter",
-    "darkdetect",
-    "pystray._win32",
-    "PIL._tkinter_finder",
-    "scipy.io.wavfile",
-    "win32timezone",
-    "win32api",
-    "win32con",
-    "win32gui",
-    "keyboard",
-    "sounddevice",
-    "pyperclip",
-    "psutil",
-    "requests",
-]
+hiddenimports = list(
+    set(
+        wv_hidden
+        + pn_hidden
+        + cl_hidden
+        + [
+            "webview",
+            "pythonnet",
+            "clr_loader",
+            "customtkinter",
+            "darkdetect",
+            "pystray._win32",
+            "PIL._tkinter_finder",
+            "scipy.io.wavfile",
+            "win32timezone",
+            "win32api",
+            "win32con",
+            "win32gui",
+            "keyboard",
+            "sounddevice",
+            "pyperclip",
+            "psutil",
+            "requests",
+        ]
+    )
+)
 
 a = Analysis(
     [os.path.join(ROOT_DIR, "hushflow_main.py")],
