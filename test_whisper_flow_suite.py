@@ -325,6 +325,7 @@ def test_streaming_vad_and_groq_pipeline():
     # 4. Studio UI & Bridge expose Groq API key & streaming toggle safely without leaking raw key
     html = build_studio_html(wfs._load_logo_data_uri())
     assert "in-groq-key" in html and "chk-streaming-vad" in html
+    assert "chk-zero-clipboard" in html
     assert "groq-whisper-large-v3-turbo" in html
     assert "https://cdn" not in html and "unpkg.com" not in html
 
@@ -347,6 +348,155 @@ def test_streaming_vad_and_groq_pipeline():
     print("  [PASS] Live VAD Streaming, Fast Grace & Cloud/Fallback Pipeline passed 100%.\n")
 
 
+def test_security_hardening():
+    print("[TEST 9/9] Testing DPAPI Secrets, ACLs, HMAC IPC, CSP, Clipboard & Binary Integrity...")
+    import base64
+    import hashlib
+    import json
+    import re
+    import tempfile
+    import security_utils as su
+
+    # 1. DPAPI secret round-trip & tamper fail-closed
+    sample_secret = "gsk_unit_test_secret_9876543210"
+    enc = su.protect_string(sample_secret, purpose="groq_api_key")
+    assert enc.startswith("dpapi:v1:")
+    assert sample_secret not in enc
+    assert su.unprotect_string(enc, purpose="groq_api_key") == sample_secret
+    assert su.unprotect_string("dpapi:v1:AAAA_CORRUPTED_DATA", purpose="groq_api_key") == ""
+
+    # 2. On-disk config encrypts key and strips multi-SID inherited ACLs
+    cfg_orig = app_paths.load_config()
+    try:
+        cfg_tmp = dict(cfg_orig)
+        cfg_tmp["groq_api_key"] = sample_secret
+        assert app_paths.save_config(cfg_tmp)
+        with open(app_paths.CONFIG_PATH, "r", encoding="utf-8") as f:
+            raw_disk = json.load(f)
+        assert raw_disk["groq_api_key"].startswith("dpapi:v1:"), "On-disk config must encrypt API key with DPAPI!"
+        assert sample_secret not in raw_disk["groq_api_key"]
+        loaded = app_paths.load_config()
+        assert loaded["groq_api_key"] == sample_secret
+
+        import win32security
+        sd = win32security.GetNamedSecurityInfo(
+            app_paths.CONFIG_PATH,
+            win32security.SE_FILE_OBJECT,
+            win32security.DACL_SECURITY_INFORMATION,
+        )
+        dacl = sd.GetSecurityDescriptorDacl()
+        assert dacl.GetAceCount() == 2, f"Expected strictly user + SYSTEM ACLs, got {dacl.GetAceCount()} ACEs"
+    finally:
+        app_paths.save_config(cfg_orig)
+
+    # 3. Authenticated Loopback IPC HMAC + Nonce Replay Rejection
+    seen = {}
+    pkt = su.sign_ipc_payload({"cmd": "reload_config"}, app_paths.USER_DATA_DIR)
+    verified = su.verify_ipc_packet(pkt, app_paths.USER_DATA_DIR, seen_nonces=seen)
+    assert verified == {"cmd": "reload_config"}
+    assert su.verify_ipc_packet(pkt, app_paths.USER_DATA_DIR, seen_nonces=seen) is None, "Replayed nonce must fail"
+    assert su.verify_ipc_packet(b'{"cmd":"stop"}', app_paths.USER_DATA_DIR, seen_nonces=seen) is None, "Unsigned JSON must fail"
+
+    env = json.loads(pkt.decode("utf-8"))
+    env["payload"]["cmd"] = "stop"
+    assert su.verify_ipc_packet(json.dumps(env).encode("utf-8"), app_paths.USER_DATA_DIR, seen_nonces={}) is None
+
+    # 4. Studio UI strict CSP, SHA-256 script hash, zero innerHTML, zero inline handlers
+    html = build_studio_html(wfs._load_logo_data_uri())
+    assert "innerHTML" not in html, "innerHTML sink must not exist in Studio UI"
+    for bad_attr in ("onclick=", "onchange=", "oninput="):
+        assert bad_attr not in html, f"Inline handler '{bad_attr}' must not exist under strict CSP"
+    m_csp = re.search(r'<meta http-equiv="Content-Security-Policy" content="([^"]+)"', html)
+    assert m_csp, "CSP meta tag missing"
+    csp = m_csp.group(1)
+    assert "default-src 'none'" in csp and "connect-src 'none'" in csp
+    assert "script-src 'sha256-" in csp
+    m_script = re.search(r"<script>([\s\S]*?)</script>", html)
+    assert m_script
+    expected_b64 = base64.b64encode(hashlib.sha256(m_script.group(1).encode("utf-8")).digest()).decode("ascii")
+    assert f"script-src 'sha256-{expected_b64}'" in csp
+
+    # 5. Settings validation allowlist & backslash-safe smart cleanup
+    bridge = wfs.StudioBridge()
+    bad_snap = bridge.update_setting("groq_api_key", "gsk_hijack")
+    assert "setting_error" in bad_snap
+    assert app_paths.load_config().get("groq_api_key") == cfg_orig.get("groq_api_key")
+    bad_hk = bridge.update_setting("hotkey", "invalid_hk")
+    assert "setting_error" in bad_hk
+    cleaned_bs = apply_smart_cleanup(
+        "hello foo world",
+        level="medium",
+        config={"word_replacements": {"foo": r"\1bar\n"}, "groq_api_key": ""},
+    )
+    assert r"\1bar\n" in cleaned_bs
+
+    # 6. Log redaction & encrypted vault corrections without raw window titles
+    leaked = su.sanitize_log_text(f"401 Bearer gsk_abcdef1234567890 failed with {enc}")
+    assert "gsk_abcdef" not in leaked and "dpapi:v1:A" not in leaked and "[REDACTED]" in leaked
+    assert su.classify_window_category("Confidential Budget - Excel - Work - Chrome") == "browser"
+    assert su.classify_window_category("main.py - Visual Studio Code") == "coding"
+
+    corr_backup = None
+    if os.path.exists(app_paths.CORRECTIONS_FILE):
+        with open(app_paths.CORRECTIONS_FILE, "r", encoding="utf-8") as f:
+            corr_backup = f.read()
+    try:
+        app_paths.save_correction_record({
+            "timestamp": "20261128_000000",
+            "original": "test orig",
+            "corrected": "test corr",
+            "window_title": "Secret Bank Portal - Chrome",
+        })
+        with open(app_paths.CORRECTIONS_FILE, "r", encoding="utf-8") as f:
+            last_raw = [ln.strip() for ln in f if ln.strip()][-1]
+        assert last_raw.startswith("dpapi:v1:")
+        assert "Secret Bank Portal" not in last_raw
+        recs = app_paths.load_correction_records()
+        assert recs[-1]["window_category"] == "browser"
+        assert "window_title" not in recs[-1]
+    finally:
+        if corr_backup is None and os.path.exists(app_paths.CORRECTIONS_FILE):
+            os.remove(app_paths.CORRECTIONS_FILE)
+        elif corr_backup is not None:
+            with open(app_paths.CORRECTIONS_FILE, "w", encoding="utf-8") as f:
+                f.write(corr_backup)
+            su.harden_path_acl(app_paths.CORRECTIONS_FILE, is_dir=False, force=True)
+
+    # 7. Win32 clipboard privacy exclusion formats
+    prev_clip = pyperclip.paste()
+    try:
+        assert su.copy_private_clipboard("privacy_clip_test")
+        assert pyperclip.paste() == "privacy_clip_test"
+    finally:
+        su.copy_private_clipboard(prev_clip or "")
+
+    # 8. Binary & model SHA-256 verification + rate limiter
+    srv_bin = app_paths.find_binary("whisper-server.exe")
+    cli_bin = app_paths.find_binary("whisper-cli.exe")
+    ok_s, _ = su.verify_executable_integrity(srv_bin, app_paths.BUNDLED_BINARY_SHA256["whisper-server.exe"])
+    ok_c, _ = su.verify_executable_integrity(cli_bin, app_paths.BUNDLED_BINARY_SHA256["whisper-cli.exe"])
+    assert ok_s and ok_c, "Bundled whisper binaries must pass integrity check"
+
+    fd, fake_bin = tempfile.mkstemp(suffix=".exe")
+    try:
+        os.write(fd, b"MZ_TAMPERED_BINARY")
+        os.close(fd)
+        ok_bad, _ = su.verify_executable_integrity(fake_bin, app_paths.BUNDLED_BINARY_SHA256["whisper-server.exe"])
+        assert not ok_bad, "Tampered executable must fail verification"
+    finally:
+        if os.path.exists(fake_bin):
+            os.remove(fake_bin)
+
+    for mk, meta in app_paths.MODEL_REGISTRY.items():
+        if not app_paths.is_cloud_model(mk):
+            assert len(meta.get("sha256", "")) == 64 and meta["url"].startswith("https://")
+
+    limiter = su.TokenBucketRateLimiter(rate_per_sec=1.0, capacity=2.0)
+    assert limiter.allow() and limiter.allow() and not limiter.allow()
+
+    print("  [PASS] Security Hardening (DPAPI, ACLs, HMAC IPC, CSP, Privacy, Integrity) passed 100%.\n")
+
+
 if __name__ == "__main__":
     print("==================================================")
     print("  HushFlow Production Verification Suite")
@@ -359,6 +509,7 @@ if __name__ == "__main__":
     test_hushflow_studio_and_assets()
     test_double_tap_lock_and_hud_pill()
     test_streaming_vad_and_groq_pipeline()
+    test_security_hardening()
     print("==================================================")
-    print("  ALL 8 CRITICAL TEST SUITES PASSED (100% GREEN)")
+    print("  ALL 9 CRITICAL TEST SUITES PASSED (100% GREEN)")
     print("==================================================")

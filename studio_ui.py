@@ -4,6 +4,10 @@ Zero CDN dependencies: works identically air-gapped offline inside Windows Edge 
 """
 
 
+import base64
+import hashlib
+
+
 def build_studio_html(logo_data_uri: str = "") -> str:
     logo_html = (
         f'<img src="{logo_data_uri}" alt="HushFlow" class="brand-img" />'
@@ -16,11 +20,26 @@ def build_studio_html(logo_data_uri: str = "") -> str:
         else ""
     )
 
+    script_js = _STUDIO_JS.strip()
+    script_sha256 = base64.b64encode(hashlib.sha256(script_js.encode("utf-8")).digest()).decode("ascii")
+    csp_policy = (
+        f"default-src 'none'; "
+        f"script-src 'sha256-{script_sha256}'; "
+        f"style-src 'unsafe-inline'; "
+        f"img-src data:; "
+        f"connect-src 'none'; "
+        f"object-src 'none'; "
+        f"frame-src 'none'; "
+        f"base-uri 'none'; "
+        f"form-action 'none';"
+    )
+
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta http-equiv="Content-Security-Policy" content="{csp_policy}" />
 <title>HushFlow</title>
 <style>
   :root {{
@@ -976,20 +995,20 @@ def build_studio_html(logo_data_uri: str = "") -> str:
     </div>
 
     <nav class="nav-group">
-      <button class="nav-item active" data-tab="overview" onclick="switchView('overview')">
+      <button class="nav-item active" data-tab="overview">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5L12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></svg>
         <span>Overview</span>
       </button>
-      <button class="nav-item" data-tab="lexicon" onclick="switchView('lexicon')">
+      <button class="nav-item" data-tab="lexicon">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
         <span>Dictionary</span>
         <span class="nav-badge" id="nav-lex-count">0</span>
       </button>
-      <button class="nav-item" data-tab="settings" onclick="switchView('settings')">
+      <button class="nav-item" data-tab="settings">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9c.26.6.82 1 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
         <span>Settings</span>
       </button>
-      <button class="nav-item" data-tab="shortcuts" onclick="switchView('shortcuts')">
+      <button class="nav-item" data-tab="shortcuts">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 3a3 3 0 0 0-3 3v12a3 3 0 0 0 3 3 3 3 0 0 0 3-3 3 3 0 0 0-3-3H6a3 3 0 0 0-3 3 3 3 0 0 0 3 3 3 3 0 0 0 3-3V6a3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3h12a3 3 0 0 0 3-3 3 3 0 0 0-3-3z"/></svg>
         <span>Shortcuts</span>
       </button>
@@ -1003,12 +1022,12 @@ def build_studio_html(logo_data_uri: str = "") -> str:
           <div class="dock-status-meta" id="sidebar-status-meta">127.0.0.1:8080</div>
         </div>
       </div>
-      <button class="dock-btn start" id="sidebar-toggle-btn" onclick="toggleEngine()">Start Engine</button>
+      <button class="dock-btn start" id="sidebar-toggle-btn">Start Engine</button>
     </div>
 
     <div class="sidebar-footer-actions">
-      <button class="ghost-link" onclick="hideToTray()">Hide to Tray</button>
-      <button class="ghost-link danger" onclick="quitAll()">Quit</button>
+      <button class="ghost-link" id="btn-hide-tray">Hide to Tray</button>
+      <button class="ghost-link danger" id="btn-quit-all">Quit</button>
     </div>
   </aside>
 
@@ -1023,7 +1042,7 @@ def build_studio_html(logo_data_uri: str = "") -> str:
             <h1 class="page-title">Overview</h1>
             <p class="page-sub" id="hw-subtitle">Detecting hardware...</p>
           </div>
-          <button class="btn-secondary" onclick="openQuickFix()">QuickFix (Alt+Z)</button>
+          <button class="btn-secondary" id="btn-quickfix-overview">QuickFix (Alt+Z)</button>
         </div>
 
         <div class="hero-card" id="hero-card">
@@ -1032,7 +1051,7 @@ def build_studio_html(logo_data_uri: str = "") -> str:
             <h2 class="hero-h2" id="hero-title">Speech Engine Inactive</h2>
             <p class="hero-p" id="hero-desc">Start the speech engine to enable ultra-fast streaming voice dictation across any Windows app.</p>
           </div>
-          <button class="btn-primary" id="hero-toggle-btn" onclick="toggleEngine()">Start Engine</button>
+          <button class="btn-primary" id="hero-toggle-btn">Start Engine</button>
         </div>
 
         <div class="metrics-grid">
@@ -1090,7 +1109,7 @@ def build_studio_html(logo_data_uri: str = "") -> str:
               <div class="card-title">Microphone Check</div>
               <div class="card-sub" id="mic-status-lbl">Mic idle (privacy indicator remains off until dictation or test)</div>
             </div>
-            <button class="btn-secondary" id="btn-mic-test" onclick="toggleMicTest()">Test Microphone</button>
+            <button class="btn-secondary" id="btn-mic-test">Test Microphone</button>
           </div>
           <div class="vu-row" id="vu-row"></div>
         </div>
@@ -1103,8 +1122,8 @@ def build_studio_html(logo_data_uri: str = "") -> str:
               <div class="card-sub">Click below to practice, or watch live dictations appear as you work.</div>
             </div>
             <div style="display:flex;gap:8px">
-              <button class="btn-secondary" onclick="copyPractice()">Copy</button>
-              <button class="btn-secondary" onclick="clearFeed()">Clear</button>
+              <button class="btn-secondary" id="btn-copy-practice">Copy</button>
+              <button class="btn-secondary" id="btn-clear-feed">Clear</button>
             </div>
           </div>
           <textarea class="practice-input" id="practice-box" placeholder="Click here and hold Ctrl + Alt to try dictating a sentence..."></textarea>
@@ -1119,7 +1138,7 @@ def build_studio_html(logo_data_uri: str = "") -> str:
             <h1 class="page-title">Dictionary & Rules</h1>
             <p class="page-sub">Teach HushFlow your names, technical acronyms, and preferred spellings.</p>
           </div>
-          <button class="btn-secondary" onclick="openQuickFix()">QuickFix Dialog (Alt+Z)</button>
+          <button class="btn-secondary" id="btn-quickfix-lexicon">QuickFix Dialog (Alt+Z)</button>
         </div>
 
         <div class="card">
@@ -1130,14 +1149,14 @@ def build_studio_html(logo_data_uri: str = "") -> str:
           <div class="lex-form">
             <input class="input-field" id="in-spoken" placeholder="Misheard phrase (e.g. antiravity)" />
             <input class="input-field" id="in-corrected" placeholder="Desired output (e.g. Antigravity)" />
-            <button class="btn-primary" style="height:34px" onclick="addRule()">Save Rule</button>
+            <button class="btn-primary" style="height:34px" id="btn-add-rule">Save Rule</button>
           </div>
         </div>
 
         <div class="card" style="margin-bottom:0">
           <div class="card-head">
             <div class="card-title">Saved Corrections</div>
-            <input class="input-field" style="width:210px;height:30px" id="filter-rules" oninput="renderRules()" placeholder="Search rules..." />
+            <input class="input-field" style="width:210px;height:30px" id="filter-rules" placeholder="Search rules..." />
           </div>
           <div class="rules-list" id="rules-list"></div>
         </div>
@@ -1150,7 +1169,7 @@ def build_studio_html(logo_data_uri: str = "") -> str:
             <h1 class="page-title">Settings</h1>
             <p class="page-sub">Configure audio input, local speech model, hotkeys, and data privacy.</p>
           </div>
-          <button class="btn-secondary" onclick="openOnboarding()">Setup Guide</button>
+          <button class="btn-secondary" id="btn-open-onboarding">Setup Guide</button>
         </div>
 
         <div class="group-label">Audio & Model</div>
@@ -1160,7 +1179,7 @@ def build_studio_html(logo_data_uri: str = "") -> str:
               <div class="setting-title">Input Microphone</div>
               <div class="setting-desc">Selected audio capture device for dictation</div>
             </div>
-            <select class="select-field" style="width:300px" id="set-mic" onchange="onMicChanged()"></select>
+            <select class="select-field" style="width:300px" id="set-mic"></select>
           </div>
           <div class="setting-row" style="flex-direction:column;align-items:stretch;gap:8px">
             <div style="display:flex;align-items:center;justify-content:space-between;gap:12px">
@@ -1169,14 +1188,14 @@ def build_studio_html(logo_data_uri: str = "") -> str:
                 <div class="setting-desc" id="lbl-model-desc">Groq Cloud Whisper Turbo with automatic local fallback</div>
               </div>
               <div style="display:flex;align-items:center;gap:8px">
-                <select class="select-field" style="width:270px" id="set-model" onchange="onModelChanged()">
+                <select class="select-field" style="width:270px" id="set-model">
                   <option value="groq-whisper-large-v3-turbo">Groq Whisper Large v3 Turbo (Cloud • Ultra-Fast)</option>
                   <option value="groq-whisper-large-v3">Groq Whisper Large v3 (Cloud • Max Accuracy)</option>
                   <option value="small.en-q5_1">small.en-q5_1 (Local Offline)</option>
                   <option value="large-v3-turbo">large-v3-turbo (Local Offline)</option>
                   <option value="base.en">base.en (Local Ultra-Light)</option>
                 </select>
-                <button class="btn-secondary" id="btn-dl-model" onclick="downloadSelectedModel()">Installed</button>
+                <button class="btn-secondary" id="btn-dl-model">Installed</button>
               </div>
             </div>
             <div class="prog-track"><div class="prog-fill" id="set-model-prog" style="width:100%"></div></div>
@@ -1185,12 +1204,12 @@ def build_studio_html(logo_data_uri: str = "") -> str:
             <div style="display:flex;align-items:center;justify-content:space-between;gap:12px">
               <div>
                 <div class="setting-title">Groq API Key</div>
-                <div class="setting-desc" id="lbl-groq-status">Optional for local mode • Required for Groq Cloud Turbo (~150 ms)</div>
+                <div class="setting-desc" id="lbl-groq-status">Encrypted locally with Windows DPAPI • Required for Groq Cloud Turbo (~150 ms)</div>
               </div>
               <div style="display:flex;align-items:center;gap:6px">
                 <input class="input-field" style="width:220px;height:32px" type="password" id="in-groq-key" placeholder="gsk_... (or set GROQ_API_KEY)" />
-                <button class="btn-secondary" style="height:32px;padding:0 10px" id="btn-toggle-key" onclick="toggleGroqKeyVis()">Show</button>
-                <button class="btn-primary" style="height:32px;padding:0 12px" id="btn-save-key" onclick="saveGroqKey('in-groq-key')">Save &amp; Test</button>
+                <button class="btn-secondary" style="height:32px;padding:0 10px" id="btn-toggle-key">Show</button>
+                <button class="btn-primary" style="height:32px;padding:0 12px" id="btn-save-key">Save &amp; Test</button>
               </div>
             </div>
           </div>
@@ -1199,7 +1218,7 @@ def build_studio_html(logo_data_uri: str = "") -> str:
               <div class="setting-title">Live VAD Chunked Streaming</div>
               <div class="setting-desc">Transcribe natural pauses while speaking so pasting is instant on key release</div>
             </div>
-            <label class="switch"><input type="checkbox" id="chk-streaming-vad" onchange="onToggleSetting('streaming_vad_enabled', this.checked)" /><span class="slider"></span></label>
+            <label class="switch"><input type="checkbox" id="chk-streaming-vad" /><span class="slider"></span></label>
           </div>
         </div>
 
@@ -1211,9 +1230,9 @@ def build_studio_html(logo_data_uri: str = "") -> str:
               <div class="setting-desc">Hold to talk, release to inject cleaned text</div>
             </div>
             <div class="segmented" id="seg-hotkey">
-              <button class="seg-btn" data-val="ctrl+alt" onclick="setHotkey('ctrl+alt')">Ctrl + Alt</button>
-              <button class="seg-btn" data-val="win+alt" onclick="setHotkey('win+alt')">Win + Alt</button>
-              <button class="seg-btn" data-val="right_alt" onclick="setHotkey('right_alt')">Right Alt</button>
+              <button class="seg-btn" data-val="ctrl+alt">Ctrl + Alt</button>
+              <button class="seg-btn" data-val="win+alt">Win + Alt</button>
+              <button class="seg-btn" data-val="right_alt">Right Alt</button>
             </div>
           </div>
           <div class="setting-row">
@@ -1221,7 +1240,7 @@ def build_studio_html(logo_data_uri: str = "") -> str:
               <div class="setting-title">Double-Tap Alt Lock (Hands-Free)</div>
               <div class="setting-desc">Hold Ctrl and double-tap Alt (or quick double-tap) to lock continuous dictation for long paragraphs</div>
             </div>
-            <label class="switch"><input type="checkbox" id="chk-double-tap" onchange="onToggleSetting('double_tap_lock', this.checked)" /><span class="slider"></span></label>
+            <label class="switch"><input type="checkbox" id="chk-double-tap" /><span class="slider"></span></label>
           </div>
           <div class="setting-row">
             <div>
@@ -1229,10 +1248,10 @@ def build_studio_html(logo_data_uri: str = "") -> str:
               <div class="setting-desc">Light/Medium: &lt;5ms local rules &bull; High: Groq Llama-3.1-8B polish</div>
             </div>
             <div class="segmented" id="seg-cleanup">
-              <button class="seg-btn" data-val="none" onclick="setCleanup('none')">None</button>
-              <button class="seg-btn" data-val="light" onclick="setCleanup('light')">Light</button>
-              <button class="seg-btn" data-val="medium" onclick="setCleanup('medium')">Medium</button>
-              <button class="seg-btn" data-val="high" onclick="setCleanup('high')">High</button>
+              <button class="seg-btn" data-val="none">None</button>
+              <button class="seg-btn" data-val="light">Light</button>
+              <button class="seg-btn" data-val="medium">Medium</button>
+              <button class="seg-btn" data-val="high">High</button>
             </div>
           </div>
           <div class="setting-row">
@@ -1240,14 +1259,14 @@ def build_studio_html(logo_data_uri: str = "") -> str:
               <div class="setting-title">Floating Edge Pill</div>
               <div class="setting-desc">60 FPS compact status pill docked cleanly at screen edge</div>
             </div>
-            <label class="switch"><input type="checkbox" id="chk-hud" onchange="onToggleSetting('hud_visible', this.checked)" /><span class="slider"></span></label>
+            <label class="switch"><input type="checkbox" id="chk-hud" /><span class="slider"></span></label>
           </div>
           <div class="setting-row">
             <div>
               <div class="setting-title">Start HushFlow on Windows Login</div>
               <div class="setting-desc">Launch background speech listener automatically when signing in</div>
             </div>
-            <label class="switch"><input type="checkbox" id="chk-autostart" onchange="onToggleAutoStart(this.checked)" /><span class="slider"></span></label>
+            <label class="switch"><input type="checkbox" id="chk-autostart" /><span class="slider"></span></label>
           </div>
         </div>
 
@@ -1255,10 +1274,17 @@ def build_studio_html(logo_data_uri: str = "") -> str:
         <div class="settings-group">
           <div class="setting-row">
             <div>
+              <div class="setting-title">Zero-Clipboard Typing (SendInput)</div>
+              <div class="setting-desc">Type directly without touching the OS clipboard (when OFF, Win32 flags still block Win+V History)</div>
+            </div>
+            <label class="switch"><input type="checkbox" id="chk-zero-clipboard" /><span class="slider"></span></label>
+          </div>
+          <div class="setting-row">
+            <div>
               <div class="setting-title">Save Audio Clips on QuickFix Correction</div>
               <div class="setting-desc">Opt-in only: keep OFF for strict 100% RAM-only operation</div>
             </div>
-            <label class="switch"><input type="checkbox" id="chk-save-audio" onchange="onToggleSetting('save_training_audio', this.checked)" /><span class="slider"></span></label>
+            <label class="switch"><input type="checkbox" id="chk-save-audio" /><span class="slider"></span></label>
           </div>
           <div class="setting-row">
             <div>
@@ -1266,8 +1292,8 @@ def build_studio_html(logo_data_uri: str = "") -> str:
               <div class="setting-desc" id="lbl-vault-path">0.00 MB used locally</div>
             </div>
             <div style="display:flex;gap:8px">
-              <button class="btn-secondary" onclick="openDataFolder()">Open Folder</button>
-              <button class="btn-danger" style="height:32px;padding:0 13px;font-size:12px" onclick="purgeVault()">Purge Vault</button>
+              <button class="btn-secondary" id="btn-open-folder">Open Folder</button>
+              <button class="btn-danger" style="height:32px;padding:0 13px;font-size:12px" id="btn-purge-vault">Purge Vault</button>
             </div>
           </div>
         </div>
@@ -1349,12 +1375,12 @@ def build_studio_html(logo_data_uri: str = "") -> str:
     <div class="onboard-step">
       <div class="onboard-step-t">
         <span>2. Groq Cloud Key &amp; Local Fallback</span>
-        <button class="btn-secondary" style="height:26px;font-size:11px" id="onboard-dl-btn" onclick="onboardDownloadModel()">Checking...</button>
+        <button class="btn-secondary" style="height:26px;font-size:11px" id="onboard-dl-btn">Checking...</button>
       </div>
       <div class="onboard-step-p" id="onboard-model-desc">Paste a Groq API key below for ~150 ms cloud transcription, or keep using your local fallback model immediately.</div>
       <div style="display:flex;gap:6px;margin-top:8px">
         <input class="input-field" style="flex:1;height:30px" type="password" id="onboard-groq-key" placeholder="Optional: paste Groq API key (gsk_...)" />
-        <button class="btn-primary" style="height:30px;padding:0 12px;font-size:12px" onclick="saveGroqKey('onboard-groq-key')">Save &amp; Test</button>
+        <button class="btn-primary" style="height:30px;padding:0 12px;font-size:12px" id="btn-onboard-save-key">Save &amp; Test</button>
       </div>
       <div class="prog-track"><div class="prog-fill" id="onboard-prog" style="width:0%"></div></div>
     </div>
@@ -1364,66 +1390,85 @@ def build_studio_html(logo_data_uri: str = "") -> str:
         <span>3. Choose Push-to-Talk Trigger</span>
       </div>
       <div class="segmented" id="onboard-seg-hotkey" style="margin-top:6px">
-        <button class="seg-btn" data-val="ctrl+alt" onclick="setHotkey('ctrl+alt')">Ctrl + Alt</button>
-        <button class="seg-btn" data-val="win+alt" onclick="setHotkey('win+alt')">Win + Alt</button>
-        <button class="seg-btn" data-val="right_alt" onclick="setHotkey('right_alt')">Right Alt</button>
+        <button class="seg-btn" data-val="ctrl+alt">Ctrl + Alt</button>
+        <button class="seg-btn" data-val="win+alt">Win + Alt</button>
+        <button class="seg-btn" data-val="right_alt">Right Alt</button>
       </div>
     </div>
 
     <div style="display:flex;justify-content:flex-end;margin-top:16px">
-      <button class="btn-primary" onclick="finishOnboarding()">Get Started</button>
+      <button class="btn-primary" id="btn-finish-onboarding">Get Started</button>
     </div>
   </div>
 </div>
 
-<script>
-  let state = {{ running: false, cfg: {{}}, rules: {{}}, devices: [], hw: {{}}, feed: [] }};
+<script>{script_js}</script>
+</body>
+</html>"""
 
-  // Build 24 VU bars once
+
+_STUDIO_JS = r"""
+  let state = { running: false, cfg: {}, rules: {}, devices: [], hw: {}, feed: [] };
+
+  // Build 24 VU bars cleanly
   const vuRow = document.getElementById('vu-row');
-  for (let i = 0; i < 24; i++) {{
+  for (let i = 0; i < 24; i++) {
     const s = document.createElement('div');
     s.className = 'vu-seg';
     s.id = 'vu-' + i;
     vuRow.appendChild(s);
-  }}
+  }
 
-  function switchView(name) {{
+  function renderKbdSequence(container, labels) {
+    if (!container) return;
+    const nodes = [];
+    labels.forEach((lbl, idx) => {
+      if (idx > 0) {
+        const sep = document.createElement('span');
+        sep.style.color = 'var(--text-muted)';
+        sep.textContent = '+';
+        nodes.push(sep);
+      }
+      const k = document.createElement('kbd');
+      k.textContent = lbl;
+      nodes.push(k);
+    });
+    container.replaceChildren(...nodes);
+  }
+
+  function getHotkeyLabels(hk) {
+    if (hk === 'win+alt') return ['Win', 'Alt'];
+    if (hk === 'right_alt') return ['Right Alt'];
+    return ['Ctrl', 'Alt'];
+  }
+
+  function getLockHotkeyLabels(hk, doubleTapOn) {
+    if (!doubleTapOn) return ['Ctrl', 'Alt', 'Space'];
+    if (hk === 'win+alt') return ['Win', '2× Alt'];
+    if (hk === 'right_alt') return ['2× Right Alt'];
+    return ['Ctrl', '2× Alt'];
+  }
+
+  function switchView(name) {
     document.querySelectorAll('.nav-item').forEach(el => el.classList.toggle('active', el.dataset.tab === name));
     document.querySelectorAll('.view').forEach(el => el.classList.toggle('active', el.id === 'view-' + name));
     if (name === 'settings') refreshSnapshot();
-  }}
+  }
 
-  function formatHotkey(hk) {{
-    if (hk === 'win+alt') return '<kbd>Win</kbd><span style="color:var(--text-muted)">+</span><kbd>Alt</kbd>';
-    if (hk === 'right_alt') return '<kbd>Right Alt</kbd>';
-    return '<kbd>Ctrl</kbd><span style="color:var(--text-muted)">+</span><kbd>Alt</kbd>';
-  }}
-
-  function formatLockHotkey(hk, doubleTapOn) {{
-    if (!doubleTapOn) {{
-      return '<kbd>Ctrl</kbd><span style="color:var(--text-muted)">+</span><kbd>Alt</kbd><span style="color:var(--text-muted)">+</span><kbd>Space</kbd>';
-    }}
-    if (hk === 'win+alt') return '<kbd>Win</kbd><span style="color:var(--text-muted)">+</span><kbd>2× Alt</kbd>';
-    if (hk === 'right_alt') return '<kbd>2× Right Alt</kbd>';
-    return '<kbd>Ctrl</kbd><span style="color:var(--text-muted)">+</span><kbd>2× Alt</kbd>';
-  }}
-
-  function applySnapshot(snap) {{
+  function applySnapshot(snap) {
     if (!snap) return;
     state = snap;
     const running = !!snap.running;
-    const cfg = snap.cfg || {{}};
-    const hw = snap.hw || {{}};
+    const cfg = snap.cfg || {};
+    const hw = snap.hw || {};
     const model = cfg.model || 'groq-whisper-large-v3-turbo';
     const isCloud = !!snap.is_cloud;
     const hasKey = !!snap.has_groq_key;
     const cloudActive = isCloud && hasKey;
 
-    document.getElementById('lbl-version').innerText = 'v' + (snap.version || '2.2.0');
-    document.getElementById('hw-subtitle').innerText = `${{hw.os || 'Windows'}} • ${{hw.ram || ''}} • ${{cloudActive ? 'Groq Cloud Turbo' : 'Local Fallback'}}`;
+    document.getElementById('lbl-version').textContent = 'v' + (snap.version || '2.2.0');
+    document.getElementById('hw-subtitle').textContent = `${hw.os || 'Windows'} • ${hw.ram || ''} • ${cloudActive ? 'Groq Cloud Turbo' : 'Local Fallback'}`;
 
-    // Sidebar status
     const sDot = document.getElementById('sidebar-dot');
     const hDot = document.getElementById('hero-dot');
     const sBtn = document.getElementById('sidebar-toggle-btn');
@@ -1436,68 +1481,63 @@ def build_studio_html(logo_data_uri: str = "") -> str:
     heroCard.classList.toggle('online', running);
     heroBadge.classList.toggle('online', running);
 
-    if (running) {{
-      document.getElementById('sidebar-status-txt').innerText = 'Engine Online';
-      document.getElementById('sidebar-status-meta').innerText = cloudActive ? 'Groq Cloud • VAD Live' : (snap.pids && snap.pids.length ? `PID ${{snap.pids[0]}} • Local` : 'Local Server Active');
-      sBtn.innerText = 'Stop Engine';
+    if (running) {
+      document.getElementById('sidebar-status-txt').textContent = 'Engine Online';
+      document.getElementById('sidebar-status-meta').textContent = cloudActive ? 'Groq Cloud • VAD Live' : (snap.pids && snap.pids.length ? `PID ${snap.pids[0]} • Local` : 'Local Server Active');
+      sBtn.textContent = 'Stop Engine';
       sBtn.className = 'dock-btn stop';
-      document.getElementById('hero-badge-txt').innerText = cloudActive ? 'CLOUD TURBO ACTIVE' : 'LOCAL ENGINE ACTIVE';
-      document.getElementById('hero-title').innerText = cloudActive ? 'Groq Cloud Turbo Active' : 'Speech Engine Active (Local)';
-      document.getElementById('hero-desc').innerText = cloudActive
+      document.getElementById('hero-badge-txt').textContent = cloudActive ? 'CLOUD TURBO ACTIVE' : 'LOCAL ENGINE ACTIVE';
+      document.getElementById('hero-title').textContent = cloudActive ? 'Groq Cloud Turbo Active' : 'Speech Engine Active (Local)';
+      document.getElementById('hero-desc').textContent = cloudActive
         ? 'Streaming live VAD chunks to Groq Whisper Large-v3-Turbo for instant paste on release.'
         : (isCloud ? 'Running on tuned local fallback until you add a Groq API key in Settings.' : 'Listening globally with local whisper-server + live VAD chunking.');
-      hBtn.innerText = 'Stop Engine';
+      hBtn.textContent = 'Stop Engine';
       hBtn.className = 'btn-danger';
-    }} else {{
-      document.getElementById('sidebar-status-txt').innerText = 'Engine Stopped';
-      document.getElementById('sidebar-status-meta').innerText = 'Ready to launch';
-      sBtn.innerText = 'Start Engine';
+    } else {
+      document.getElementById('sidebar-status-txt').textContent = 'Engine Stopped';
+      document.getElementById('sidebar-status-meta').textContent = 'Ready to launch';
+      sBtn.textContent = 'Start Engine';
       sBtn.className = 'dock-btn start';
-      document.getElementById('hero-badge-txt').innerText = 'ENGINE STOPPED';
-      document.getElementById('hero-title').innerText = 'Speech Engine Inactive';
-      document.getElementById('hero-desc').innerText = 'Start the speech engine to enable ultra-fast streaming voice dictation across any Windows app.';
-      hBtn.innerText = 'Start Engine';
+      document.getElementById('hero-badge-txt').textContent = 'ENGINE STOPPED';
+      document.getElementById('hero-title').textContent = 'Speech Engine Inactive';
+      document.getElementById('hero-desc').textContent = 'Start the speech engine to enable ultra-fast streaming voice dictation across any Windows app.';
+      hBtn.textContent = 'Start Engine';
       hBtn.className = 'btn-primary';
-    }}
+    }
     sBtn.disabled = false;
     hBtn.disabled = false;
 
-    // Metrics
-    document.getElementById('stat-model').innerText = model;
-    document.getElementById('stat-ram-foot').innerText = snap.model_ram || 'Cloud ~150 ms';
-    document.getElementById('stat-threads').innerText = (cfg.streaming_vad_enabled !== false) ? 'Live VAD Stream' : 'Batch Release';
+    document.getElementById('stat-model').textContent = model;
+    document.getElementById('stat-ram-foot').textContent = snap.model_ram || 'Cloud ~150 ms';
+    document.getElementById('stat-threads').textContent = (cfg.streaming_vad_enabled !== false) ? 'Live VAD Stream' : 'Batch Release';
     const engModeEl = document.getElementById('stat-engine-mode');
-    if (engModeEl) engModeEl.innerText = cloudActive ? 'Groq Cloud + Local Fallback' : (hw.threads || 'Local CPU');
-    const ruleCount = Object.keys(cfg.word_replacements || {{}}).length;
+    if (engModeEl) engModeEl.textContent = cloudActive ? 'Groq Cloud + Local Fallback' : (hw.threads || 'Local CPU');
+    const ruleCount = Object.keys(cfg.word_replacements || {}).length;
     const vocabCount = (cfg.custom_vocabulary || []).length;
-    document.getElementById('stat-lex').innerText = `${{ruleCount}} Rule${{ruleCount === 1 ? '' : 's'}}`;
-    document.getElementById('stat-vocab').innerText = `${{vocabCount}} Vocab Terms`;
-    document.getElementById('nav-lex-count').innerText = ruleCount;
-    document.getElementById('stat-privacy').innerText = cloudActive ? 'Groq HTTPS' : (cfg.save_training_audio ? 'Opt-In Vault' : 'RAM Only');
+    document.getElementById('stat-lex').textContent = `${ruleCount} Rule${ruleCount === 1 ? '' : 's'}`;
+    document.getElementById('stat-vocab').textContent = `${vocabCount} Vocab Terms`;
+    document.getElementById('nav-lex-count').textContent = String(ruleCount);
+    document.getElementById('stat-privacy').textContent = cloudActive ? 'Groq HTTPS' : (cfg.save_training_audio ? 'Opt-In Vault' : 'RAM Only');
     const privSubEl = document.getElementById('stat-privacy-sub');
-    if (privSubEl) privSubEl.innerText = cloudActive ? 'In-Memory WAV • Zero Disk' : '100% Local Loopback';
-    document.getElementById('hotkey-display').innerHTML = formatHotkey(cfg.hotkey || 'ctrl+alt');
-    const dblOn = cfg.double_tap_lock !== false;
-    const lockDisp = document.getElementById('lock-hotkey-display');
-    if (lockDisp) lockDisp.innerHTML = formatLockHotkey(cfg.hotkey || 'ctrl+alt', dblOn);
-    const shortLock = document.getElementById('shortcut-lock-display');
-    if (shortLock) {{
-      const hk = cfg.hotkey || 'ctrl+alt';
-      shortLock.innerHTML = hk === 'win+alt' ? '<kbd>Win</kbd> + <kbd>2× Alt</kbd>' : (hk === 'right_alt' ? '<kbd>2× Right Alt</kbd>' : '<kbd>Ctrl</kbd> + <kbd>2× Alt</kbd>');
-    }}
+    if (privSubEl) privSubEl.textContent = cloudActive ? 'DPAPI Key • In-Memory WAV' : '100% Local Loopback';
 
-    // Settings population
+    const hk = cfg.hotkey || 'ctrl+alt';
+    const dblOn = cfg.double_tap_lock !== false;
+    renderKbdSequence(document.getElementById('hotkey-display'), getHotkeyLabels(hk));
+    renderKbdSequence(document.getElementById('lock-hotkey-display'), getLockHotkeyLabels(hk, dblOn));
+    renderKbdSequence(document.getElementById('shortcut-lock-display'), getLockHotkeyLabels(hk, true));
+
     const micSel = document.getElementById('set-mic');
-    micSel.innerHTML = '';
-    (snap.devices || []).forEach(d => {{
+    const micOpts = (snap.devices || []).map(d => {
       const opt = document.createElement('option');
       opt.value = d.id === null ? '__default__' : String(d.id);
       opt.text = d.name;
-      if ((d.id === null && (cfg.mic_device === null || cfg.mic_device === undefined)) || d.id === cfg.mic_device) {{
+      if ((d.id === null && (cfg.mic_device === null || cfg.mic_device === undefined)) || d.id === cfg.mic_device) {
         opt.selected = true;
-      }}
-      micSel.appendChild(opt);
-    }});
+      }
+      return opt;
+    });
+    micSel.replaceChildren(...micOpts);
 
     document.getElementById('set-model').value = model;
     updateModelButtons(snap);
@@ -1505,39 +1545,40 @@ def build_studio_html(logo_data_uri: str = "") -> str:
     if (chkStream) chkStream.checked = cfg.streaming_vad_enabled !== false;
     const keyStatus = document.getElementById('lbl-groq-status');
     const keyInput = document.getElementById('in-groq-key');
-    if (keyStatus && keyInput) {{
-      if (snap.has_groq_key) {{
-        keyStatus.innerText = `Groq key active (${{snap.groq_key_masked || 'configured'}}) • Cloud Turbo armed`;
+    if (keyStatus && keyInput) {
+      if (snap.has_groq_key) {
+        keyStatus.textContent = `Groq key active (${snap.groq_key_masked || 'configured'}) • DPAPI encrypted`;
         keyInput.placeholder = snap.groq_key_masked || 'gsk_... (saved)';
-      }} else {{
-        keyStatus.innerText = 'No Groq key saved yet • Using local fallback until key is added';
+      } else {
+        keyStatus.textContent = 'No Groq key saved yet • Using local fallback until key is added';
         keyInput.placeholder = 'gsk_... (or set GROQ_API_KEY)';
-      }}
-    }}
+      }
+    }
     const chkDbl = document.getElementById('chk-double-tap');
     if (chkDbl) chkDbl.checked = dblOn;
     document.getElementById('chk-hud').checked = !!cfg.hud_visible;
     document.getElementById('chk-autostart').checked = !!snap.autostart;
+    const chkZero = document.getElementById('chk-zero-clipboard');
+    if (chkZero) chkZero.checked = !!cfg.zero_clipboard_typing;
     document.getElementById('chk-save-audio').checked = !!cfg.save_training_audio;
-    document.getElementById('lbl-vault-path').innerText = `${{snap.vault_mb || '0.00'}} MB in %LocalAppData%\\\\HushFlow`;
+    document.getElementById('lbl-vault-path').textContent = `${snap.vault_mb || '0.00'} MB in %LocalAppData%\\HushFlow (User-Only ACL)`;
 
-    ['seg-hotkey', 'onboard-seg-hotkey'].forEach(id => {{
-      document.querySelectorAll(`#${{id}} .seg-btn`).forEach(b => b.classList.toggle('active', b.dataset.val === (cfg.hotkey || 'ctrl+alt')));
-    }});
+    ['seg-hotkey', 'onboard-seg-hotkey'].forEach(id => {
+      document.querySelectorAll(`#${id} .seg-btn`).forEach(b => b.classList.toggle('active', b.dataset.val === hk));
+    });
     document.querySelectorAll('#seg-cleanup .seg-btn').forEach(b => b.classList.toggle('active', b.dataset.val === (cfg.cleanup_level || 'medium')));
 
-    // Onboarding
-    if (snap.show_onboarding) {{
+    if (snap.show_onboarding) {
       document.getElementById('onboard-modal').classList.add('open');
-    }} else {{
+    } else {
       document.getElementById('onboard-modal').classList.remove('open');
-    }}
+    }
 
     renderRules();
     renderFeed(snap.feed || []);
-  }}
+  }
 
-  function updateModelButtons(snap) {{
+  function updateModelButtons(snap) {
     const sBtn = document.getElementById('btn-dl-model');
     const sProg = document.getElementById('set-model-prog');
     const oBtn = document.getElementById('onboard-dl-btn');
@@ -1548,49 +1589,54 @@ def build_studio_html(logo_data_uri: str = "") -> str:
     const isReady = !!(snap && snap.model_ready);
     const sizeMb = (snap && snap.model_size_mb) || 190;
 
-    if (isCloud) {{
-      sBtn.innerText = hasKey ? 'Cloud Ready' : (snap.fallback_ready ? 'Fallback Ready' : 'Key Needed');
+    if (isCloud) {
+      sBtn.textContent = hasKey ? 'Cloud Ready' : (snap.fallback_ready ? 'Fallback Ready' : 'Key Needed');
       sBtn.disabled = true;
       sProg.style.width = hasKey ? '100%' : '45%';
-      oBtn.innerText = hasKey ? 'Cloud Ready' : (snap.fallback_ready ? 'Fallback Ready' : 'Key Optional');
+      oBtn.textContent = hasKey ? 'Cloud Ready' : (snap.fallback_ready ? 'Fallback Ready' : 'Key Optional');
       oBtn.disabled = true;
-      oDesc.innerText = hasKey
+      oDesc.textContent = hasKey
         ? 'Groq Cloud Whisper Turbo is armed with live VAD streaming!'
         : 'Paste your Groq API key below for ~150 ms cloud transcription (local fallback is already ready).';
       oProg.style.width = hasKey ? '100%' : '50%';
       return;
-    }}
+    }
 
-    if (isReady) {{
-      sBtn.innerText = 'Installed';
+    if (isReady) {
+      sBtn.textContent = 'Installed';
       sBtn.disabled = true;
       sProg.style.width = '100%';
-      oBtn.innerText = 'Ready';
+      oBtn.textContent = 'Ready';
       oBtn.disabled = true;
-      oDesc.innerText = 'Local quantized speech model detected and verified.';
+      oDesc.textContent = 'Local quantized speech model detected and SHA-256 verified.';
       oProg.style.width = '100%';
-    }} else {{
-      sBtn.innerText = `Download (${{sizeMb}} MB)`;
+    } else {
+      sBtn.textContent = `Download (${sizeMb} MB)`;
       sBtn.disabled = false;
       sProg.style.width = '0%';
-      oBtn.innerText = `Download (${{sizeMb}} MB)`;
+      oBtn.textContent = `Download (${sizeMb} MB)`;
       oBtn.disabled = false;
-      oDesc.innerText = `Download local GGML model (${{sizeMb}} MB) to transcribe offline.`;
+      oDesc.textContent = `Download local GGML model (${sizeMb} MB) with SHA-256 verification.`;
       oProg.style.width = '0%';
-    }}
-  }}
+    }
+  }
 
-  function renderRules() {{
+  function renderRules() {
     const q = (document.getElementById('filter-rules').value || '').toLowerCase();
-    const reps = (state.cfg && state.cfg.word_replacements) || {{}};
+    const reps = (state.cfg && state.cfg.word_replacements) || {};
     const list = document.getElementById('rules-list');
     const entries = Object.entries(reps).filter(([k, v]) => k.toLowerCase().includes(q) || v.toLowerCase().includes(q));
-    if (!entries.length) {{
-      list.innerHTML = '<div style="text-align:center;color:var(--text-muted);padding:26px;font-size:12px">No replacement rules found. Add a misheard phrase above or press Alt + Z after dictating.</div>';
+    if (!entries.length) {
+      const emptyEl = document.createElement('div');
+      emptyEl.style.textAlign = 'center';
+      emptyEl.style.color = 'var(--text-muted)';
+      emptyEl.style.padding = '26px';
+      emptyEl.style.fontSize = '12px';
+      emptyEl.textContent = 'No replacement rules found. Add a misheard phrase above or press Alt + Z after dictating.';
+      list.replaceChildren(emptyEl);
       return;
-    }}
-    list.innerHTML = '';
-    entries.forEach(([k, v]) => {{
+    }
+    const rows = entries.map(([k, v]) => {
       const row = document.createElement('div');
       row.className = 'rule-row';
       const pair = document.createElement('div');
@@ -1603,16 +1649,16 @@ def build_studio_html(logo_data_uri: str = "") -> str:
       del.className = 'btn-secondary';
       del.style.height = '26px'; del.style.padding = '0 10px'; del.style.fontSize = '11px';
       del.textContent = 'Remove';
-      del.onclick = () => deleteRule(k);
+      del.addEventListener('click', () => deleteRule(k));
       row.append(pair, del);
-      list.appendChild(row);
-    }});
-  }}
+      return row;
+    });
+    list.replaceChildren(...rows);
+  }
 
-  function renderFeed(items) {{
+  function renderFeed(items) {
     const box = document.getElementById('feed-list');
-    box.innerHTML = '';
-    items.slice().reverse().forEach(it => {{
+    const rows = items.slice().reverse().map(it => {
       const el = document.createElement('div');
       el.className = 'feed-item';
       const ts = document.createElement('span'); ts.className = 'feed-ts'; ts.textContent = it.ts || '';
@@ -1621,133 +1667,190 @@ def build_studio_html(logo_data_uri: str = "") -> str:
       cp.className = 'btn-secondary';
       cp.style.height = '24px'; cp.style.padding = '0 9px'; cp.style.fontSize = '11px';
       cp.textContent = 'Copy';
-      cp.onclick = () => navigator.clipboard.writeText(it.cleaned || '');
+      cp.addEventListener('click', () => navigator.clipboard.writeText(it.cleaned || ''));
       el.append(ts, txt, cp);
-      box.appendChild(el);
-    }});
-  }}
+      return el;
+    });
+    box.replaceChildren(...rows);
+  }
 
   window.onEngineStatePush = (snap) => applySnapshot(snap);
-  window.onLiveTranscript = (item) => {{
+  window.onLiveTranscript = (item) => {
     if (!state.feed) state.feed = [];
     state.feed.push(item);
     if (state.feed.length > 15) state.feed.shift();
     renderFeed(state.feed);
-  }};
+  };
 
-  window.onMicLevel = (level, active) => {{
+  window.onMicLevel = (level, active) => {
     const count = Math.floor(level * 24);
-    for (let i = 0; i < 24; i++) {{
+    for (let i = 0; i < 24; i++) {
       const seg = document.getElementById('vu-' + i);
       if (!seg) continue;
       seg.className = i < count ? (i >= 18 ? 'vu-seg hot' : 'vu-seg on') : 'vu-seg';
-    }}
+    }
     const btn = document.getElementById('btn-mic-test');
     const lbl = document.getElementById('mic-status-lbl');
-    if (active) {{
-      btn.innerText = 'Stop Test';
-      lbl.innerText = count > 0 ? `Signal active (${{Math.round(level * 100)}}%)` : 'Listening for speech...';
-    }} else {{
-      btn.innerText = 'Test Microphone';
-      lbl.innerText = 'Mic idle (privacy indicator remains off until dictation or test)';
-    }}
-  }};
+    if (active) {
+      btn.textContent = 'Stop Test';
+      lbl.textContent = count > 0 ? `Signal active (${Math.round(level * 100)}%)` : 'Listening for speech...';
+    } else {
+      btn.textContent = 'Test Microphone';
+      lbl.textContent = 'Mic idle (privacy indicator remains off until dictation or test)';
+    }
+  };
 
-  window.onModelProgress = (pct, statusMsg) => {{
+  window.onModelProgress = (pct, statusMsg) => {
     const w = Math.round(pct * 100) + '%';
     document.getElementById('set-model-prog').style.width = w;
     document.getElementById('onboard-prog').style.width = w;
-    if (statusMsg) document.getElementById('onboard-model-desc').innerText = statusMsg;
-  }};
+    if (statusMsg) document.getElementById('onboard-model-desc').textContent = statusMsg;
+  };
 
-  async function refreshSnapshot() {{
-    if (window.pywebview && window.pywebview.api) {{
+  async function refreshSnapshot() {
+    if (window.pywebview && window.pywebview.api) {
       const snap = await window.pywebview.api.get_snapshot();
       applySnapshot(snap);
-    }}
-  }}
+    }
+  }
 
-  async function toggleEngine() {{
+  async function toggleEngine() {
     document.getElementById('sidebar-toggle-btn').disabled = true;
     document.getElementById('hero-toggle-btn').disabled = true;
     document.getElementById('sidebar-dot').className = 'status-dot busy';
-    document.getElementById('sidebar-status-txt').innerText = state.running ? 'Stopping...' : 'Starting...';
+    document.getElementById('sidebar-status-txt').textContent = state.running ? 'Stopping...' : 'Starting...';
     const snap = await window.pywebview.api.toggle_engine();
     applySnapshot(snap);
-  }}
+  }
 
-  async function toggleMicTest() {{ await window.pywebview.api.toggle_mic_test(); }}
-  async function addRule() {{
+  async function toggleMicTest() { await window.pywebview.api.toggle_mic_test(); }
+  async function addRule() {
     const sp = document.getElementById('in-spoken').value.trim();
     const co = document.getElementById('in-corrected').value.trim();
     if (!sp || !co) return;
     document.getElementById('in-spoken').value = '';
     document.getElementById('in-corrected').value = '';
     applySnapshot(await window.pywebview.api.add_rule(sp, co));
-  }}
-  async function deleteRule(k) {{ applySnapshot(await window.pywebview.api.delete_rule(k)); }}
-  async function setHotkey(val) {{ applySnapshot(await window.pywebview.api.update_setting('hotkey', val)); }}
-  async function setCleanup(val) {{ applySnapshot(await window.pywebview.api.update_setting('cleanup_level', val)); }}
-  async function onToggleSetting(k, v) {{ applySnapshot(await window.pywebview.api.update_setting(k, v)); }}
-  async function onMicChanged() {{
+  }
+  async function deleteRule(k) { applySnapshot(await window.pywebview.api.delete_rule(k)); }
+  async function setHotkey(val) { applySnapshot(await window.pywebview.api.update_setting('hotkey', val)); }
+  async function setCleanup(val) { applySnapshot(await window.pywebview.api.update_setting('cleanup_level', val)); }
+  async function onToggleSetting(k, v) { applySnapshot(await window.pywebview.api.update_setting(k, v)); }
+  async function onMicChanged() {
     const raw = document.getElementById('set-mic').value;
     const val = raw === '__default__' ? null : parseInt(raw, 10);
     applySnapshot(await window.pywebview.api.update_setting('mic_device', val));
-  }}
-  function toggleGroqKeyVis() {{
+  }
+  function toggleGroqKeyVis() {
     const inp = document.getElementById('in-groq-key');
     const btn = document.getElementById('btn-toggle-key');
     if (!inp || !btn) return;
     inp.type = inp.type === 'password' ? 'text' : 'password';
-    btn.innerText = inp.type === 'password' ? 'Show' : 'Hide';
-  }}
-  async function saveGroqKey(inputId) {{
+    btn.textContent = inp.type === 'password' ? 'Show' : 'Hide';
+  }
+  async function saveGroqKey(inputId) {
     const inp = document.getElementById(inputId);
     const val = inp ? inp.value.trim() : '';
     const st = document.getElementById('lbl-groq-status');
-    if (st) st.innerText = val ? 'Testing Groq connection...' : 'Clearing key...';
+    if (st) st.textContent = val ? 'Testing Groq connection...' : 'Clearing key...';
     const snap = await window.pywebview.api.save_groq_api_key(val, true);
     if (inp) inp.value = '';
     applySnapshot(snap);
-    if (st && snap && snap.key_message) st.innerText = snap.key_message;
+    if (st && snap && snap.key_message) st.textContent = snap.key_message;
     const oDesc = document.getElementById('onboard-model-desc');
-    if (oDesc && snap && snap.key_message) oDesc.innerText = snap.key_message;
-  }}
-  async function onModelChanged() {{
+    if (oDesc && snap && snap.key_message) oDesc.textContent = snap.key_message;
+  }
+  async function onModelChanged() {
     const val = document.getElementById('set-model').value;
     applySnapshot(await window.pywebview.api.select_model(val));
-  }}
-  async function downloadSelectedModel() {{
-    document.getElementById('btn-dl-model').innerText = 'Downloading...';
+  }
+  async function downloadSelectedModel() {
+    document.getElementById('btn-dl-model').textContent = 'Downloading...';
     document.getElementById('btn-dl-model').disabled = true;
     applySnapshot(await window.pywebview.api.download_model(document.getElementById('set-model').value));
-  }}
-  async function onboardDownloadModel() {{
-    document.getElementById('onboard-dl-btn').innerText = 'Downloading...';
+  }
+  async function onboardDownloadModel() {
+    document.getElementById('onboard-dl-btn').textContent = 'Downloading...';
     document.getElementById('onboard-dl-btn').disabled = true;
     applySnapshot(await window.pywebview.api.download_model(state.cfg.model || 'small.en-q5_1'));
-  }}
-  async function onToggleAutoStart(enabled) {{ applySnapshot(await window.pywebview.api.set_autostart(enabled)); }}
-  async function purgeVault() {{ applySnapshot(await window.pywebview.api.purge_vault()); }}
-  async function openDataFolder() {{ await window.pywebview.api.open_data_folder(); }}
-  async function openQuickFix() {{ await window.pywebview.api.open_quickfix(); }}
-  async function openOnboarding() {{ document.getElementById('onboard-modal').classList.add('open'); }}
-  async function finishOnboarding() {{
+  }
+  async function onToggleAutoStart(enabled) { applySnapshot(await window.pywebview.api.set_autostart(enabled)); }
+  async function purgeVault() { applySnapshot(await window.pywebview.api.purge_vault()); }
+  async function openDataFolder() { await window.pywebview.api.open_data_folder(); }
+  async function openQuickFix() { await window.pywebview.api.open_quickfix(); }
+  async function openOnboarding() { document.getElementById('onboard-modal').classList.add('open'); }
+  async function finishOnboarding() {
     document.getElementById('onboard-modal').classList.remove('open');
     applySnapshot(await window.pywebview.api.complete_onboarding());
-  }}
-  function copyPractice() {{
+  }
+  function copyPractice() {
     const v = document.getElementById('practice-box').value;
     if (v) navigator.clipboard.writeText(v);
-  }}
-  async function clearFeed() {{
+  }
+  async function clearFeed() {
     document.getElementById('practice-box').value = '';
     applySnapshot(await window.pywebview.api.clear_feed());
-  }}
-  async function hideToTray() {{ await window.pywebview.api.hide_to_tray(); }}
-  async function quitAll() {{ await window.pywebview.api.quit_all(); }}
+  }
+  async function hideToTray() { await window.pywebview.api.hide_to_tray(); }
+  async function quitAll() { await window.pywebview.api.quit_all(); }
 
+  function bindUiEvents() {
+    document.querySelectorAll('.nav-item[data-tab]').forEach(el => {
+      el.addEventListener('click', () => switchView(el.dataset.tab));
+    });
+    const clickMap = {
+      'sidebar-toggle-btn': toggleEngine,
+      'hero-toggle-btn': toggleEngine,
+      'btn-hide-tray': hideToTray,
+      'btn-quit-all': quitAll,
+      'btn-quickfix-overview': openQuickFix,
+      'btn-quickfix-lexicon': openQuickFix,
+      'btn-mic-test': toggleMicTest,
+      'btn-copy-practice': copyPractice,
+      'btn-clear-feed': clearFeed,
+      'btn-add-rule': addRule,
+      'btn-open-onboarding': openOnboarding,
+      'btn-dl-model': downloadSelectedModel,
+      'onboard-dl-btn': onboardDownloadModel,
+      'btn-toggle-key': toggleGroqKeyVis,
+      'btn-save-key': () => saveGroqKey('in-groq-key'),
+      'btn-onboard-save-key': () => saveGroqKey('onboard-groq-key'),
+      'btn-open-folder': openDataFolder,
+      'btn-purge-vault': purgeVault,
+      'btn-finish-onboarding': finishOnboarding,
+    };
+    Object.entries(clickMap).forEach(([id, fn]) => {
+      const el = document.getElementById(id);
+      if (el) el.addEventListener('click', fn);
+    });
+
+    const toggleMap = {
+      'chk-streaming-vad': 'streaming_vad_enabled',
+      'chk-double-tap': 'double_tap_lock',
+      'chk-hud': 'hud_visible',
+      'chk-zero-clipboard': 'zero_clipboard_typing',
+      'chk-save-audio': 'save_training_audio',
+    };
+    Object.entries(toggleMap).forEach(([id, key]) => {
+      const el = document.getElementById(id);
+      if (el) el.addEventListener('change', (e) => onToggleSetting(key, e.target.checked));
+    });
+
+    document.getElementById('chk-autostart').addEventListener('change', (e) => onToggleAutoStart(e.target.checked));
+    document.getElementById('filter-rules').addEventListener('input', renderRules);
+    document.getElementById('set-mic').addEventListener('change', onMicChanged);
+    document.getElementById('set-model').addEventListener('change', onModelChanged);
+
+    ['seg-hotkey', 'onboard-seg-hotkey'].forEach(containerId => {
+      document.querySelectorAll(`#${containerId} .seg-btn[data-val]`).forEach(btn => {
+        btn.addEventListener('click', () => setHotkey(btn.dataset.val));
+      });
+    });
+    document.querySelectorAll('#seg-cleanup .seg-btn[data-val]').forEach(btn => {
+      btn.addEventListener('click', () => setCleanup(btn.dataset.val));
+    });
+  }
+
+  bindUiEvents();
   window.addEventListener('pywebviewready', refreshSnapshot);
-</script>
-</body>
-</html>"""
+"""

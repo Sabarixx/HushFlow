@@ -16,24 +16,14 @@ from app_paths import (
     CORRECTIONS_FILE,
     TRAINING_MANIFEST,
     ensure_initialized,
+    load_correction_records,
 )
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
 
 def load_corrections():
-    if not os.path.exists(CORRECTIONS_FILE):
-        return []
-    records = []
-    with open(CORRECTIONS_FILE, "r", encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if line:
-                try:
-                    records.append(json.loads(line))
-                except Exception:
-                    pass
-    return records
+    return load_correction_records()
 
 
 def compile_training_manifest():

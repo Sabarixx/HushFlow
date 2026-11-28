@@ -12,6 +12,15 @@ from typing import Dict, List, Optional, Tuple
 
 import psutil
 
+from security_utils import (
+    atomic_write_text,
+    classify_window_category,
+    harden_path_acl,
+    is_dpapi_protected,
+    protect_string,
+    unprotect_string,
+)
+
 APP_NAME = "HushFlow"
 APP_VERSION = "2.2.0"
 APP_PUBLISHER = "HushFlow"
@@ -62,6 +71,8 @@ MODEL_REGISTRY = {
         "filename": "ggml-small.en-q5_1.bin",
         "label": "Small English (Local Offline)",
         "size_mb": 190,
+        "size_bytes": 190098681,
+        "sha256": "bfdff4894dcb76bbf647d56263ea2a96645423f1669176f4844a1bf8e478ad30",
         "ram_mb": "~190 MB",
         "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.en-q5_1.bin",
     },
@@ -70,6 +81,8 @@ MODEL_REGISTRY = {
         "filename": "ggml-large-v3-turbo-q5_0.bin",
         "label": "Large v3 Turbo (Local Offline)",
         "size_mb": 574,
+        "size_bytes": 574041195,
+        "sha256": "394221709cd5ad1f40c46e6031ca61bce88931e6e088c188294c6d5a55ffa7e2",
         "ram_mb": "~574 MB",
         "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo-q5_0.bin",
     },
@@ -78,9 +91,16 @@ MODEL_REGISTRY = {
         "filename": "ggml-base.en.bin",
         "label": "Base English (Local Ultra-Light)",
         "size_mb": 148,
+        "size_bytes": 147964211,
+        "sha256": "a03779c86df3323075f5e796cb2ce5029f00ec8869eee3fdfb897afe36c6d002",
         "ram_mb": "~148 MB",
         "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin",
     },
+}
+
+BUNDLED_BINARY_SHA256 = {
+    "whisper-server.exe": "3dcfe9aa94e53e98d9a8d8584b78dc8e6c921269fbc8a4f17b17b915a752775c",
+    "whisper-cli.exe": "e0edcaf6b84f4faf89d6a170e5ea88940d876fe7d2069255926677b4882ad11c",
 }
 
 MODEL_ALIASES = {
@@ -115,6 +135,7 @@ DEFAULT_CONFIG = {
     "dock_y": 360,
     "mic_device": None,
     "save_training_audio": False,
+    "zero_clipboard_typing": False,
     "onboarding_completed": False,
     "custom_vocabulary": [
         "HushFlow",
@@ -158,10 +179,21 @@ def is_cloud_model(model_name: Optional[str]) -> bool:
 
 def get_groq_api_key(cfg: Optional[Dict] = None) -> str:
     if cfg and isinstance(cfg, dict):
-        k = (cfg.get("groq_api_key") or "").strip()
-        if k:
-            return k
+        raw = (cfg.get("groq_api_key") or "").strip()
+        if raw:
+            k = unprotect_string(raw, purpose="groq_api_key") if is_dpapi_protected(raw) else raw
+            if k:
+                return k
     return (os.environ.get("GROQ_API_KEY") or "").strip()
+
+
+def expected_model_integrity(model_path: str) -> Tuple[Optional[str], Optional[int]]:
+    """Look up expected SHA-256 and exact byte size if path matches a known MODEL_REGISTRY file."""
+    fname = os.path.basename(model_path or "").lower()
+    for meta in MODEL_REGISTRY.values():
+        if meta.get("filename", "").lower() == fname and meta.get("sha256"):
+            return meta["sha256"], meta.get("size_bytes")
+    return None, None
 
 
 def get_model_search_dirs() -> List[str]:
@@ -232,6 +264,10 @@ def fallback_model_exists(cfg: Optional[Dict] = None) -> bool:
 def _ensure_dirs():
     for d in (USER_DATA_DIR, MODELS_DIR, VAULT_DIR, VAULT_AUDIO_DIR, LOGS_DIR):
         os.makedirs(d, exist_ok=True)
+        harden_path_acl(d, is_dir=True)
+    for fpath in (CONFIG_PATH, CORRECTIONS_FILE, TRAINING_MANIFEST):
+        if os.path.exists(fpath):
+            harden_path_acl(fpath, is_dir=False)
 
 
 def _migrate_legacy_data():
@@ -290,6 +326,7 @@ def ensure_initialized():
 def load_config() -> Dict:
     ensure_initialized()
     cfg = dict(DEFAULT_CONFIG)
+    needs_dpapi_migration = False
     if os.path.exists(CONFIG_PATH):
         try:
             with open(CONFIG_PATH, "r", encoding="utf-8") as f:
@@ -298,18 +335,79 @@ def load_config() -> Dict:
                 cfg.update(loaded)
         except Exception:
             pass
+    raw_key = (cfg.get("groq_api_key") or "").strip()
+    if raw_key:
+        if is_dpapi_protected(raw_key):
+            cfg["groq_api_key"] = unprotect_string(raw_key, purpose="groq_api_key")
+        else:
+            cfg["groq_api_key"] = raw_key
+            needs_dpapi_migration = True
     cfg["model"] = canonical_model_key(cfg.get("model"))
+    if needs_dpapi_migration:
+        save_config(cfg)
     return cfg
 
 
 def save_config(cfg: Dict) -> bool:
     _ensure_dirs()
     try:
-        with open(CONFIG_PATH, "w", encoding="utf-8") as f:
-            json.dump(cfg, f, indent=2, ensure_ascii=False)
+        disk_cfg = dict(cfg)
+        raw_key = (disk_cfg.get("groq_api_key") or "").strip()
+        if raw_key:
+            disk_cfg["groq_api_key"] = (
+                raw_key if is_dpapi_protected(raw_key) else protect_string(raw_key, purpose="groq_api_key")
+            )
+        else:
+            disk_cfg["groq_api_key"] = ""
+        serialized = json.dumps(disk_cfg, indent=2, ensure_ascii=False)
+        atomic_write_text(CONFIG_PATH, serialized, harden_acl=True)
         return True
     except Exception:
         return False
+
+
+def save_correction_record(record: Dict) -> bool:
+    """
+    Sanitize window context (coarse category only, never raw window titles) and
+    persist a DPAPI-encrypted line inside CORRECTIONS_FILE with strict NTFS ACLs.
+    """
+    _ensure_dirs()
+    try:
+        clean_rec = dict(record or {})
+        raw_title = clean_rec.pop("window_title", "")
+        if "window_category" not in clean_rec:
+            clean_rec["window_category"] = classify_window_category(str(raw_title or ""))
+        line_payload = protect_string(json.dumps(clean_rec, ensure_ascii=False), purpose="vault_record")
+        with open(CORRECTIONS_FILE, "a", encoding="utf-8") as f:
+            f.write(line_payload + "\n")
+        harden_path_acl(CORRECTIONS_FILE, is_dir=False)
+        return True
+    except Exception:
+        return False
+
+
+def load_correction_records() -> List[Dict]:
+    """Load DPAPI-protected (or legacy plain JSON) records from CORRECTIONS_FILE."""
+    if not os.path.exists(CORRECTIONS_FILE):
+        return []
+    records: List[Dict] = []
+    try:
+        with open(CORRECTIONS_FILE, "r", encoding="utf-8") as f:
+            for raw_line in f:
+                line = raw_line.strip()
+                if not line:
+                    continue
+                try:
+                    decoded = unprotect_string(line, purpose="vault_record") if is_dpapi_protected(line) else line
+                    if decoded:
+                        obj = json.loads(decoded)
+                        if isinstance(obj, dict):
+                            records.append(obj)
+                except Exception:
+                    continue
+    except Exception:
+        pass
+    return records
 
 
 def get_vault_disk_usage_bytes() -> int:

@@ -27,12 +27,22 @@ import requests
 import requests.adapters
 
 from app_paths import (
+    BUNDLED_BINARY_SHA256,
     MODEL_REGISTRY,
     canonical_model_key,
+    expected_model_integrity,
     get_groq_api_key,
     get_hardware_summary,
     is_cloud_model,
     resolve_model_path,
+)
+from security_utils import (
+    MAX_AUDIO_WAV_BYTES,
+    TokenBucketRateLimiter,
+    harden_path_acl,
+    safe_error_summary,
+    verify_executable_integrity,
+    verify_file_integrity,
 )
 
 try:
@@ -143,6 +153,8 @@ class GroqClientPool:
         self._lock = threading.Lock()
         self._api_key: str = ""
         self._client = None
+        self._key_test_limiter = TokenBucketRateLimiter(rate_per_sec=0.5, capacity=4.0)
+        self._asr_limiter = TokenBucketRateLimiter(rate_per_sec=2.5, capacity=10.0)
 
     def get_client(self, api_key: str):
         key = (api_key or "").strip()
@@ -177,15 +189,17 @@ class GroqClientPool:
             return False, "API key is empty."
         if not GROQ_SDK_AVAILABLE:
             return False, "groq Python SDK is not installed."
+        if not self._key_test_limiter.allow():
+            return False, "Rate limited: please wait a moment before testing again."
         try:
             client = Groq(api_key=key, timeout=5.0, max_retries=0)
             client.models.list()
             return True, "Connected to Groq Cloud."
         except Exception as exc:
-            msg = str(exc)
-            if "401" in msg or "invalid_api_key" in msg.lower() or "authentication" in msg.lower():
+            summary = safe_error_summary(exc, max_len=100)
+            if "401" in summary or "invalid_api_key" in summary.lower() or "authentication" in summary.lower():
                 return False, "Invalid Groq API key (401 Unauthorized)."
-            return False, f"Connection failed: {msg[:120]}"
+            return False, f"Connection failed: {summary}"
 
 
 GROQ_POOL = GroqClientPool()
@@ -204,7 +218,10 @@ class ASREngine:
             http_session = requests.Session()
             http_session.mount("http://", requests.adapters.HTTPAdapter(pool_connections=5, pool_maxsize=10))
         self.http_session = http_session
-        self.server_url = server_url
+        safe_url = (server_url or "http://127.0.0.1:8080").strip().rstrip("/")
+        if not safe_url.startswith(("http://127.0.0.1:", "http://localhost:")):
+            safe_url = "http://127.0.0.1:8080"
+        self.server_url = safe_url
         self.whisper_cli_path = whisper_cli_path
 
     def transcribe_wav_bytes(
@@ -219,6 +236,12 @@ class ASREngine:
         Transcribe WAV bytes using configured cloud or local model.
         Returns (transcript_text, backend_used).
         """
+        if not wav_bytes or len(wav_bytes) > MAX_AUDIO_WAV_BYTES:
+            if wav_bytes and len(wav_bytes) > MAX_AUDIO_WAV_BYTES:
+                logging.warning("Audio payload exceeded MAX_AUDIO_WAV_BYTES cap; dropping oversized segment.")
+            return "", "none"
+
+        prompt = (prompt or "")[:1200]
         model_key = canonical_model_key(config.get("model"))
         meta = MODEL_REGISTRY[model_key]
         api_key = get_groq_api_key(config)
@@ -226,27 +249,30 @@ class ASREngine:
 
         # 1. Primary Cloud Path (Groq Whisper Large-v3-Turbo / Large-v3)
         if is_cloud_model(model_key) and api_key and GROQ_SDK_AVAILABLE:
-            api_model = meta.get("api_model", "whisper-large-v3-turbo")
-            t0 = time.perf_counter()
-            try:
-                client = GROQ_POOL.get_client(api_key)
-                kwargs = {
-                    "file": ("audio.wav", wav_bytes, "audio/wav"),
-                    "model": api_model,
-                    "response_format": "json",
-                    "temperature": 0.0,
-                }
-                if prompt:
-                    kwargs["prompt"] = prompt[-800:]
-                if lang and lang != "auto":
-                    kwargs["language"] = lang
-                resp = client.audio.transcriptions.create(**kwargs)
-                text = (getattr(resp, "text", None) or "").strip()
-                elapsed_ms = (time.perf_counter() - t0) * 1000.0
-                logging.info(f"Groq ASR [{api_model}] {duration_sec:.1f}s audio -> {elapsed_ms:.0f} ms (len={len(text)})")
-                return text, f"groq:{api_model}"
-            except Exception as exc:
-                logging.warning(f"Groq ASR failed ({exc}); falling back to local whisper.")
+            if GROQ_POOL._asr_limiter.allow():
+                api_model = meta.get("api_model", "whisper-large-v3-turbo")
+                t0 = time.perf_counter()
+                try:
+                    client = GROQ_POOL.get_client(api_key)
+                    kwargs = {
+                        "file": ("audio.wav", wav_bytes, "audio/wav"),
+                        "model": api_model,
+                        "response_format": "json",
+                        "temperature": 0.0,
+                    }
+                    if prompt:
+                        kwargs["prompt"] = prompt[-800:]
+                    if lang and lang != "auto":
+                        kwargs["language"] = lang
+                    resp = client.audio.transcriptions.create(**kwargs)
+                    text = (getattr(resp, "text", None) or "").strip()
+                    elapsed_ms = (time.perf_counter() - t0) * 1000.0
+                    logging.info(f"Groq ASR [{api_model}] {duration_sec:.1f}s audio -> {elapsed_ms:.0f} ms (len={len(text)})")
+                    return text, f"groq:{api_model}"
+                except Exception as exc:
+                    logging.warning(f"Groq ASR failed ({safe_error_summary(exc)}); falling back to local whisper.")
+            else:
+                logging.warning("Groq ASR client rate limit reached; routing chunk to local whisper fallback.")
 
         # 2. Local In-Memory whisper-server Path (direct POST, zero pre-flight GET /health)
         dyn_timeout = max(20.0, duration_sec * 3.0) if duration_sec > 0 else 45.0
@@ -263,17 +289,32 @@ class ASREngine:
                 text = resp.json().get("text", "").strip()
                 return text, "local:whisper-server"
         except Exception as exc:
-            logging.warning(f"whisper-server inference failed ({exc}); checking CLI fallback.")
+            logging.warning(f"whisper-server inference failed ({safe_error_summary(exc)}); checking CLI fallback.")
 
-        # 3. Last-resort whisper-cli.exe Fallback
+        # 3. Last-resort whisper-cli.exe Fallback (SHA-256 verified binary & model)
         if self.whisper_cli_path and os.path.exists(self.whisper_cli_path) and temp_wav_path:
+            cli_sha = BUNDLED_BINARY_SHA256.get(os.path.basename(self.whisper_cli_path).lower())
+            if cli_sha:
+                ok_cli, reason_cli = verify_executable_integrity(self.whisper_cli_path, cli_sha)
+                if not ok_cli:
+                    logging.error(f"Refusing whisper-cli execution ({reason_cli}).")
+                    return "", "none"
+
             fallback_model = config.get("local_fallback_model", "small.en-q5_1")
             model_path = resolve_model_path(fallback_model if is_cloud_model(model_key) else model_key)
             if os.path.exists(model_path):
+                exp_sha, exp_size = expected_model_integrity(model_path)
+                if exp_sha:
+                    ok_mdl, reason_mdl = verify_file_integrity(model_path, exp_sha, exp_size)
+                    if not ok_mdl:
+                        logging.error(f"Refusing local model verification failure ({reason_mdl}).")
+                        return "", "none"
+
                 threads = get_hardware_summary().get("opt_threads_num", "4")
                 try:
                     with open(temp_wav_path, "wb") as f:
                         f.write(wav_bytes)
+                    harden_path_acl(temp_wav_path, is_dir=False)
                     cmd = [
                         self.whisper_cli_path,
                         "-m", model_path,
@@ -295,7 +336,7 @@ class ASREngine:
                     )
                     return res.stdout.strip(), "local:whisper-cli"
                 except Exception as exc:
-                    logging.error(f"whisper-cli execution failed: {exc}")
+                    logging.error(f"whisper-cli execution failed ({safe_error_summary(exc)}).")
                 finally:
                     if os.path.exists(temp_wav_path):
                         try:
@@ -437,7 +478,7 @@ class StreamingVADSession:
                     audio_seg, dur = item
                     self._transcribe_segment(audio_seg, dur)
             except Exception as exc:
-                logging.warning(f"Streaming VAD chunk error: {exc}")
+                logging.warning(f"Streaming VAD chunk error: {safe_error_summary(exc)}")
             finally:
                 self._chunk_queue.task_done()
 

@@ -30,6 +30,7 @@ hiddenimports = list(
         + gq_hidden
         + [
             "asr_pipeline",
+            "security_utils",
             "groq",
             "httpx",
             "httpcore",
@@ -47,6 +48,8 @@ hiddenimports = list(
             "win32api",
             "win32con",
             "win32gui",
+            "win32security",
+            "ntsecuritycon",
             "keyboard",
             "sounddevice",
             "pyperclip",

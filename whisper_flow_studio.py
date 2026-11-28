@@ -10,9 +10,11 @@ Renders offline Chromium UI inside a seamless dark Windows 11 desktop window:
 
 import os
 import sys
+import hashlib
 import time
 import json
 import base64
+import hmac
 import socket
 import threading
 import subprocess
@@ -48,9 +50,20 @@ from app_paths import (
     model_exists,
     purge_vault_audio_and_logs,
     save_config,
+    save_correction_record,
 )
 from asr_pipeline import GROQ_POOL
 from brand_assets import get_app_icon_path, get_app_logo_path
+from security_utils import (
+    MAX_RULE_COUNT,
+    harden_path_acl,
+    install_log_redaction_filter,
+    safe_error_summary,
+    sanitize_rule_pair,
+    sign_ipc_payload,
+    validate_setting_update,
+    verify_ipc_packet,
+)
 from studio_ui import build_studio_html
 
 try:
@@ -64,6 +77,7 @@ SERVER_HEALTH_URL = "http://127.0.0.1:8080/health"
 ENGINE_CTL_PORT = 48766
 
 ensure_initialized()
+install_log_redaction_filter()
 
 
 def _apply_seamless_window_chrome(title: str, icon_path: str):
@@ -94,10 +108,10 @@ def _apply_seamless_window_chrome(title: str, icon_path: str):
 
 
 def send_engine_command(cmd: str):
-    """Notify running HushFlow Engine over loopback UDP."""
+    """Notify running HushFlow Engine over authenticated loopback UDP."""
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        sock.sendto(json.dumps({"cmd": cmd}).encode("utf-8"), ("127.0.0.1", ENGINE_CTL_PORT))
+        sock.sendto(sign_ipc_payload({"cmd": cmd}, USER_DATA_DIR), ("127.0.0.1", ENGINE_CTL_PORT))
         sock.close()
     except Exception:
         pass
@@ -360,18 +374,19 @@ class StudioBridge:
         return {"testing": self._audio_tester.running}
 
     def add_rule(self, spoken: str, corrected: str) -> Dict:
-        spoken = (spoken or "").strip()
-        corrected = (corrected or "").strip()
+        spoken, corrected = sanitize_rule_pair(spoken, corrected)
         if spoken and corrected:
             cfg = load_config()
             reps = cfg.get("word_replacements", {})
-            reps[spoken.lower()] = corrected
-            cfg["word_replacements"] = reps
+            key_lower = spoken.lower()
+            if key_lower in reps or len(reps) < MAX_RULE_COUNT:
+                reps[key_lower] = corrected
+                cfg["word_replacements"] = reps
 
             vocab = cfg.get("custom_vocabulary", [])
             for w in corrected.split():
-                clean_w = w.strip(".,!?;:\"'()")
-                if clean_w and clean_w not in vocab:
+                clean_w = w.strip(".,!?;:\"'()")[:80]
+                if clean_w and clean_w not in vocab and len(vocab) < MAX_RULE_COUNT:
                     vocab.append(clean_w)
             cfg["custom_vocabulary"] = vocab
             save_config(cfg)
@@ -380,14 +395,10 @@ class StudioBridge:
                 "timestamp": time.strftime("%Y%m%d_%H%M%S"),
                 "original": spoken,
                 "corrected": corrected,
-                "replacements": [[spoken.lower(), corrected]],
-                "window_title": f"{APP_NAME} Dictionary",
+                "replacements": [[key_lower, corrected]],
+                "window_category": "hushflow",
             }
-            try:
-                with open(CORRECTIONS_FILE, "a", encoding="utf-8") as f:
-                    f.write(json.dumps(record, ensure_ascii=False) + "\n")
-            except Exception:
-                pass
+            save_correction_record(record)
             send_engine_command("reload_config")
         return self.get_snapshot()
 
@@ -402,8 +413,13 @@ class StudioBridge:
         return self.get_snapshot()
 
     def update_setting(self, key: str, value) -> Dict:
+        ok, clean_val, err = validate_setting_update(key, value)
+        if not ok:
+            snap = self.get_snapshot()
+            snap["setting_error"] = err
+            return snap
         cfg = load_config()
-        cfg[key] = value
+        cfg[key] = clean_val
         save_config(cfg)
         send_engine_command("reload_config")
         return self.get_snapshot()
@@ -443,24 +459,48 @@ class StudioBridge:
         if is_cloud_model(key):
             return self.get_snapshot()
         meta = MODEL_REGISTRY[key]
+        url = (meta.get("url") or "").strip()
+        if not url.startswith("https://"):
+            safe_err = json.dumps("Blocked insecure non-HTTPS model URL.")
+            self._eval_js(f"window.onModelProgress && window.onModelProgress(0.0, {safe_err})")
+            return self.get_snapshot()
+
+        expected_sha = (meta.get("sha256") or "").strip().lower()
+        expected_bytes = meta.get("size_bytes")
         os.makedirs(MODELS_DIR, exist_ok=True)
+        harden_path_acl(MODELS_DIR, is_dir=True)
         dest_path = os.path.join(MODELS_DIR, meta["filename"])
         tmp_path = dest_path + ".part"
         self._downloading_model = True
         try:
-            with requests.get(meta["url"], stream=True, timeout=30) as r:
+            hasher = hashlib.sha256()
+            max_bytes = (expected_bytes or (meta["size_mb"] * 1024 * 1024)) + (32 * 1024 * 1024)
+            dl = 0
+            with requests.get(url, stream=True, timeout=30) as r:
                 r.raise_for_status()
-                total = int(r.headers.get("content-length", 0)) or (meta["size_mb"] * 1024 * 1024)
-                dl = 0
+                total = int(r.headers.get("content-length", 0)) or (expected_bytes or meta["size_mb"] * 1024 * 1024)
                 with open(tmp_path, "wb") as f:
                     for chunk in r.iter_content(chunk_size=1024 * 256):
                         if chunk:
-                            f.write(chunk)
                             dl += len(chunk)
+                            if dl > max_bytes:
+                                raise ValueError("Model download exceeded maximum allowed size.")
+                            f.write(chunk)
+                            hasher.update(chunk)
                             pct = min(0.99, dl / max(1, total))
-                            self._eval_js(f"window.onModelProgress && window.onModelProgress({pct:.3f}, 'Downloading {key}...')")
+                            msg_json = json.dumps(f"Downloading {key}...")
+                            self._eval_js(f"window.onModelProgress && window.onModelProgress({pct:.3f}, {msg_json})")
+
+            if expected_bytes is not None and dl != expected_bytes:
+                raise ValueError(f"Model byte count mismatch ({dl} != {expected_bytes}).")
+            if expected_sha:
+                actual_sha = hasher.hexdigest().lower()
+                if not hmac.compare_digest(actual_sha, expected_sha):
+                    raise ValueError("SHA-256 integrity verification failed for downloaded model.")
+
             os.replace(tmp_path, dest_path)
-            self._eval_js("window.onModelProgress && window.onModelProgress(1.0, 'Model downloaded and verified.')")
+            harden_path_acl(dest_path, is_dir=False, force=True)
+            self._eval_js("window.onModelProgress && window.onModelProgress(1.0, 'Model downloaded and SHA-256 verified.')")
             cfg = load_config()
             cfg["model"] = key
             save_config(cfg)
@@ -471,7 +511,7 @@ class StudioBridge:
                     os.remove(tmp_path)
                 except Exception:
                     pass
-            safe_err = json.dumps(f"Download failed: {e}")
+            safe_err = json.dumps(f"Download failed: {safe_error_summary(e)}")
             self._eval_js(f"window.onModelProgress && window.onModelProgress(0.0, {safe_err})")
         finally:
             self._downloading_model = False
@@ -542,8 +582,9 @@ class StudioBridge:
                 pass
 
     def _start_background_workers(self):
-        # 1. UDP loopback listener for Engine -> Studio events & tray restore
+        # 1. Authenticated UDP loopback listener for Engine -> Studio events & tray restore
         def _ipc():
+            seen_nonces = {}
             try:
                 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
                 sock.bind(("127.0.0.1", STUDIO_IPC_PORT))
@@ -553,13 +594,15 @@ class StudioBridge:
 
             while self._ipc_running:
                 try:
-                    data, _ = sock.recvfrom(65535)
-                    msg = json.loads(data.decode("utf-8"))
+                    data, _ = sock.recvfrom(32768)
+                    msg = verify_ipc_packet(data, USER_DATA_DIR, max_bytes=32768, seen_nonces=seen_nonces)
+                    if not isinstance(msg, dict):
+                        continue
                     mtype = msg.get("type")
                     if mtype == "show_studio":
                         self._bring_to_front()
                     elif mtype == "transcript":
-                        item = {"cleaned": msg.get("cleaned", "").strip(), "ts": msg.get("ts", "")}
+                        item = {"cleaned": str(msg.get("cleaned", "")).strip(), "ts": str(msg.get("ts", ""))}
                         if item["cleaned"]:
                             self._feed.append(item)
                             if len(self._feed) > 20:
@@ -618,7 +661,7 @@ def main():
         if handle and kernel32.GetLastError() == 183:  # ERROR_ALREADY_EXISTS
             kernel32.CloseHandle(handle)
             sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            sock.sendto(b'{"type":"show_studio"}', ("127.0.0.1", STUDIO_IPC_PORT))
+            sock.sendto(sign_ipc_payload({"type": "show_studio"}, USER_DATA_DIR), ("127.0.0.1", STUDIO_IPC_PORT))
             sock.close()
             sys.exit(0)
         _studio_mutex_handle = handle
@@ -658,13 +701,11 @@ def main():
     window.events.closing += _on_closing
     bridge._start_background_workers()
 
-    profile_dir = os.path.join(USER_DATA_DIR, "webview_profile")
-    os.makedirs(profile_dir, exist_ok=True)
     webview.start(
         gui="edgechromium",
         icon=ico_path if os.path.exists(ico_path) else None,
-        private_mode=False,
-        storage_path=profile_dir,
+        private_mode=True,
+        debug=False,
     )
 
 

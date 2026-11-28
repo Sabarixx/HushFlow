@@ -1,7 +1,8 @@
 <#
 .SYNOPSIS
-    Builds standalone HushFlow.exe (PyInstaller) and HushFlow-Setup-2.1.0.exe (Inno Setup 6).
-    Optionally signs all generated executables when a Code Signing certificate is provided.
+    Builds standalone HushFlow.exe (PyInstaller) and HushFlow-Setup-2.2.0.exe (Inno Setup 6).
+    Automatically signs generated binaries & installer with -PfxPath, -CertThumbprint,
+    or the local "HushFlow Local Code Signing" certificate in Cert:\CurrentUser\My.
 #>
 param(
     [string]$PfxPath = "",
@@ -13,6 +14,21 @@ $ErrorActionPreference = "Stop"
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $RootDir = Split-Path -Parent $ScriptDir
 Set-Location $RootDir
+
+if (-not $PfxPath -and -not $CertThumbprint) {
+    $autoCert = Get-ChildItem Cert:\CurrentUser\My -ErrorAction SilentlyContinue |
+        Where-Object {
+            $_.Subject -like "*HushFlow Local Code Signing*" -and
+            $_.HasPrivateKey -and
+            ($_.EnhancedKeyUsageList | Where-Object { $_.ObjectId -eq "1.3.6.1.5.5.7.3.3" })
+        } |
+        Sort-Object NotAfter -Descending |
+        Select-Object -First 1
+    if ($autoCert) {
+        $CertThumbprint = $autoCert.Thumbprint
+        Write-Host "[INFO] Auto-selected local Code Signing cert: $CertThumbprint" -ForegroundColor DarkGray
+    }
+}
 
 Write-Host "[1/5] Generating 4x supersampled HushFlow brand assets..." -ForegroundColor Cyan
 python brand_assets.py
@@ -42,16 +58,22 @@ function Invoke-CodeSign {
     }
     if ($PfxPath -and (Test-Path $PfxPath)) {
         & $signtool sign /fd SHA256 /f $PfxPath /p $PfxPassword /tr "http://timestamp.digicert.com" /td SHA256 $TargetFile
+        if ($LASTEXITCODE -ne 0) {
+            & $signtool sign /fd SHA256 /f $PfxPath /p $PfxPassword $TargetFile
+            if ($LASTEXITCODE -ne 0) { throw "signtool failed for $TargetFile" }
+        }
     } elseif ($CertThumbprint) {
         & $signtool sign /fd SHA256 /sha1 $CertThumbprint /tr "http://timestamp.digicert.com" /td SHA256 $TargetFile
+        if ($LASTEXITCODE -ne 0) {
+            & $signtool sign /fd SHA256 /sha1 $CertThumbprint $TargetFile
+            if ($LASTEXITCODE -ne 0) { throw "signtool failed for $TargetFile" }
+        }
     }
 }
 
 if ($PfxPath -or $CertThumbprint) {
-    Write-Host "[3b] Signing HushFlow binaries..." -ForegroundColor Cyan
+    Write-Host "[3b] Signing HushFlow.exe binary..." -ForegroundColor Cyan
     Invoke-CodeSign "$RootDir\dist\HushFlow\HushFlow.exe"
-    Invoke-CodeSign "$RootDir\dist\HushFlow\_internal\bin\whisper-server.exe"
-    Invoke-CodeSign "$RootDir\dist\HushFlow\_internal\bin\whisper-cli.exe"
 }
 
 Write-Host "[4/5] Compiling Windows Installer via Inno Setup 6..." -ForegroundColor Cyan
@@ -73,8 +95,10 @@ if ($PfxPath -or $CertThumbprint) {
 
 Write-Host "[5/5] Writing SHA-256 verification checksums..." -ForegroundColor Cyan
 $ExeHash = (Get-FileHash "$RootDir\dist\HushFlow\HushFlow.exe" -Algorithm SHA256).Hash
+$SrvHash = (Get-FileHash "$RootDir\dist\HushFlow\_internal\bin\whisper-server.exe" -Algorithm SHA256).Hash
+$CliHash = (Get-FileHash "$RootDir\dist\HushFlow\_internal\bin\whisper-cli.exe" -Algorithm SHA256).Hash
 $SetupHash = (Get-FileHash $SetupExe -Algorithm SHA256).Hash
-"SHA256 HushFlow.exe: $ExeHash`r`nSHA256 HushFlow-Setup-2.1.0.exe: $SetupHash" | Set-Content "$RootDir\dist\CHECKSUMS.txt"
+"SHA256 HushFlow.exe: $ExeHash`r`nSHA256 whisper-server.exe: $SrvHash`r`nSHA256 whisper-cli.exe: $CliHash`r`nSHA256 HushFlow-Setup-2.2.0.exe: $SetupHash" | Set-Content "$RootDir\dist\CHECKSUMS.txt"
 
 Write-Host "`n[SUCCESS] Build Complete:" -ForegroundColor Green
 Write-Host "  Standalone App : $RootDir\dist\HushFlow\HushFlow.exe"

@@ -11,6 +11,9 @@ import logging
 import urllib.request
 import urllib.error
 
+from app_paths import get_groq_api_key
+from security_utils import MAX_RULE_COUNT, MAX_RULE_LEN, TokenBucketRateLimiter, safe_error_summary
+
 try:
     from groq import Groq
     _GROQ_AVAILABLE = True
@@ -20,6 +23,7 @@ except ImportError:
 
 _CLEANUP_GROQ_KEY = ""
 _CLEANUP_GROQ_CLIENT = None
+_LLM_CLEANUP_LIMITER = TokenBucketRateLimiter(rate_per_sec=2.0, capacity=8.0)
 
 # Common vocal fillers to eliminate
 FILLER_PATTERNS = [
@@ -244,10 +248,18 @@ def normalize_spoken_numbers(text: str, config: dict = None) -> str:
 
     text = " ".join(new_tokens)
 
-    # 5. User custom word replacements from config
-    if config and "word_replacements" in config:
+    # 5. User custom word replacements from config (bounded & backslash-safe)
+    if config and isinstance(config.get("word_replacements"), dict):
+        applied = 0
         for src, dst in config["word_replacements"].items():
-            text = re.sub(rf"\b{re.escape(src)}\b", dst, text, flags=re.IGNORECASE)
+            if applied >= MAX_RULE_COUNT:
+                break
+            src_s = (src or "").strip()[:MAX_RULE_LEN]
+            dst_s = (dst or "").strip()[:MAX_RULE_LEN]
+            if not src_s:
+                continue
+            text = re.sub(rf"\b{re.escape(src_s)}\b", lambda _m, r=dst_s: r, text, flags=re.IGNORECASE)
+            applied += 1
 
     return text
 
@@ -387,9 +399,13 @@ def _get_cleanup_groq_client(api_key: str):
 
 def try_cloud_llm_polish(raw_text: str, config: dict) -> str:
     """Optional ultra-fast Groq Llama-3.1-8B-Instant polish used strictly in 'high' cleanup mode."""
-    groq_key = ((config or {}).get("groq_api_key") or "").strip() or (os.environ.get("GROQ_API_KEY") or "").strip()
+    groq_key = get_groq_api_key(config)
     if not groq_key:
         return None
+    if not _LLM_CLEANUP_LIMITER.allow():
+        logging.debug("Cloud LLM polish rate limit active; returning local cleanup.")
+        return None
+    raw_text = (raw_text or "")[:6000]
     try:
         client = _get_cleanup_groq_client(groq_key)
         if client is not None:
@@ -412,6 +428,9 @@ def try_cloud_llm_polish(raw_text: str, config: dict) -> str:
             out = (completion.choices[0].message.content or "").strip()
             return out or None
 
+        endpoint = "https://api.groq.com/openai/v1/chat/completions"
+        if not endpoint.startswith("https://"):
+            return None
         req_data = json.dumps({
             "model": "llama-3.1-8b-instant",
             "messages": [
@@ -429,7 +448,7 @@ def try_cloud_llm_polish(raw_text: str, config: dict) -> str:
             "max_tokens": 512,
         }).encode("utf-8")
         req = urllib.request.Request(
-            "https://api.groq.com/openai/v1/chat/completions",
+            endpoint,
             data=req_data,
             headers={"Authorization": f"Bearer {groq_key}", "Content-Type": "application/json"},
         )
@@ -437,7 +456,7 @@ def try_cloud_llm_polish(raw_text: str, config: dict) -> str:
             res = json.loads(resp.read().decode("utf-8"))
             return res["choices"][0]["message"]["content"].strip()
     except Exception as e:
-        logging.debug(f"Cloud LLM polish skipped: {e}")
+        logging.debug(f"Cloud LLM polish skipped ({safe_error_summary(e)})")
     return None
 
 def apply_smart_cleanup(raw_text: str, level: str = "medium", config: dict = None) -> str:

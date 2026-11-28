@@ -23,10 +23,20 @@ from app_paths import (
     VAULT_AUDIO_DIR,
     VAULT_DIR,
     load_config,
+    load_correction_records,
     save_config,
+    save_correction_record,
     ensure_initialized,
 )
 from brand_assets import get_app_icon_path
+from security_utils import (
+    MAX_RULE_COUNT,
+    copy_private_clipboard,
+    harden_path_acl,
+    safe_error_summary,
+    sanitize_rule_pair,
+    send_text_unicode,
+)
 
 ensure_initialized()
 
@@ -103,6 +113,7 @@ def record_correction_and_learn(last_event: dict, corrected_text: str, config_pa
         saved_wav_path = os.path.join(VAULT_AUDIO_DIR, saved_wav_name)
         try:
             shutil.copy2(wav_path, saved_wav_path)
+            harden_path_acl(saved_wav_path, is_dir=False)
             saved_wav_rel = os.path.join("vault", "audio", saved_wav_name)
         except Exception:
             saved_wav_rel = None
@@ -114,25 +125,25 @@ def record_correction_and_learn(last_event: dict, corrected_text: str, config_pa
         "corrected": corrected_text,
         "replacements": replacements,
         "audio_file": saved_wav_rel,
+        "window_category": last_event.get("window_category", ""),
         "window_title": last_event.get("window_title", ""),
     }
 
-    try:
-        with open(CORRECTIONS_FILE, "a", encoding="utf-8") as f:
-            f.write(json.dumps(record, ensure_ascii=False) + "\n")
-    except Exception as e:
-        print(f"[ERROR] Failed to save correction log: {e}")
+    if not save_correction_record(record):
+        print("[ERROR] Failed to save encrypted correction log.")
 
     vocab = cfg.get("custom_vocabulary", [])
     rep_map = cfg.get("word_replacements", {})
 
     for word in learned_words:
-        clean_word = word.strip(".,!?;:")
-        if clean_word and clean_word not in vocab:
+        clean_word = word.strip(".,!?;:")[:80]
+        if clean_word and clean_word not in vocab and len(vocab) < MAX_RULE_COUNT:
             vocab.append(clean_word)
 
     for old_w, new_w in replacements:
-        rep_map[old_w] = new_w
+        s_old, s_new = sanitize_rule_pair(old_w, new_w)
+        if s_old and s_new and (s_old.lower() in rep_map or len(rep_map) < MAX_RULE_COUNT):
+            rep_map[s_old.lower()] = s_new
 
     cfg["custom_vocabulary"] = vocab
     cfg["word_replacements"] = rep_map
@@ -142,7 +153,7 @@ def record_correction_and_learn(last_event: dict, corrected_text: str, config_pa
             with open(config_path, "w", encoding="utf-8") as f:
                 json.dump(cfg, f, indent=2, ensure_ascii=False)
         except Exception as e:
-            print(f"[ERROR] Failed to update custom config: {e}")
+            print(f"[ERROR] Failed to update custom config: {safe_error_summary(e)}")
     else:
         save_config(cfg)
 
@@ -152,11 +163,13 @@ def record_correction_and_learn(last_event: dict, corrected_text: str, config_pa
             import keyboard
             import pyperclip
 
+            use_zero_clip = bool(cfg.get("zero_clipboard_typing", False))
             old_clip = None
-            try:
-                old_clip = pyperclip.paste()
-            except Exception:
-                pass
+            if not use_zero_clip:
+                try:
+                    old_clip = pyperclip.paste()
+                except Exception:
+                    pass
 
             cur_thread = ctypes.windll.kernel32.GetCurrentThreadId()
             target_thread = ctypes.windll.user32.GetWindowThreadProcessId(target_hwnd, None)
@@ -172,21 +185,23 @@ def record_correction_and_learn(last_event: dict, corrected_text: str, config_pa
             keyboard.send("ctrl+z")
             time.sleep(0.06)
 
-            pyperclip.copy(corrected_text)
-            time.sleep(0.04)
-            keyboard.send("ctrl+v")
+            if use_zero_clip:
+                send_text_unicode(corrected_text)
+            else:
+                copy_private_clipboard(corrected_text)
+                time.sleep(0.04)
+                keyboard.send("ctrl+v")
 
-            def _restore():
-                try:
-                    time.sleep(0.45)
-                    if old_clip is not None:
-                        pyperclip.copy(old_clip)
-                except Exception:
-                    pass
+                def _restore():
+                    try:
+                        time.sleep(0.20)
+                        copy_private_clipboard(old_clip if old_clip is not None else "")
+                    except Exception:
+                        pass
 
-            threading.Thread(target=_restore, daemon=True).start()
+                threading.Thread(target=_restore, daemon=True).start()
         except Exception as e:
-            print(f"[ERROR] Could not auto-replace in window: {e}")
+            print(f"[ERROR] Could not auto-replace in window: {safe_error_summary(e)}")
 
     return learned_words
 
@@ -338,18 +353,13 @@ def spawn_quick_fix(initial_text: str, on_submit):
 def main():
     """Standalone QuickFix entry point (e.g. launched from HushFlow Studio)."""
     initial = ""
-    if os.path.exists(CORRECTIONS_FILE):
-        try:
-            with open(CORRECTIONS_FILE, "r", encoding="utf-8") as f:
-                lines = [ln.strip() for ln in f if ln.strip()]
-            if lines:
-                initial = json.loads(lines[-1]).get("corrected", "")
-        except Exception:
-            pass
+    records = load_correction_records()
+    if records:
+        initial = str(records[-1].get("corrected", ""))
 
     def _on_save(corrected_val: str):
         if initial:
-            record_correction_and_learn({"text": initial, "window_title": "HushFlow QuickFix"}, corrected_val)
+            record_correction_and_learn({"text": initial, "window_category": "hushflow"}, corrected_val)
 
     dlg = QuickFixWindow(initial, _on_save)
     dlg.show()

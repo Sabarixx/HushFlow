@@ -29,6 +29,7 @@ import psutil
 
 from app_paths import (
     APP_NAME,
+    BUNDLED_BINARY_SHA256,
     CONFIG_PATH,
     IS_FROZEN,
     INSTALL_DIR,
@@ -40,6 +41,7 @@ from app_paths import (
     MODEL_REGISTRY,
     canonical_model_key,
     ensure_initialized,
+    expected_model_integrity,
     find_binary,
     get_groq_api_key,
     get_hardware_summary,
@@ -47,6 +49,18 @@ from app_paths import (
     load_config,
     resolve_model_path,
     save_config,
+)
+from security_utils import (
+    classify_window_category,
+    copy_private_clipboard,
+    harden_path_acl,
+    install_log_redaction_filter,
+    safe_error_summary,
+    send_text_unicode,
+    sign_ipc_payload,
+    verify_executable_integrity,
+    verify_file_integrity,
+    verify_ipc_packet,
 )
 from asr_pipeline import (
     ASREngine,
@@ -67,6 +81,8 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
 )
+install_log_redaction_filter()
+harden_path_acl(MAIN_LOG_FILE, is_dir=False)
 
 
 class SafeWriter:
@@ -133,10 +149,11 @@ _shutdown_flag = threading.Event()
 
 
 def notify_studio(payload: dict):
-    """Best-effort connectionless UDP loopback packet to HushFlow Studio."""
+    """Best-effort authenticated UDP loopback packet to HushFlow Studio."""
     try:
+        signed = sign_ipc_payload(payload, USER_DATA_DIR)
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        sock.sendto(json.dumps(payload, ensure_ascii=False).encode("utf-8"), ("127.0.0.1", STUDIO_IPC_PORT))
+        sock.sendto(signed, ("127.0.0.1", STUDIO_IPC_PORT))
         sock.close()
     except Exception:
         pass
@@ -247,6 +264,20 @@ def ensure_whisper_server():
         logging.warning(f"whisper-server ({WHISPER_SERVER}) or model ({ACTIVE_MODEL_PATH}) missing. CLI fallback mode.")
         return False
 
+    srv_sha = BUNDLED_BINARY_SHA256.get(os.path.basename(WHISPER_SERVER).lower())
+    if srv_sha:
+        ok_srv, reason_srv = verify_executable_integrity(WHISPER_SERVER, srv_sha)
+        if not ok_srv:
+            logging.error(f"Refusing whisper-server launch due to integrity failure ({reason_srv}).")
+            return False
+
+    exp_sha, exp_size = expected_model_integrity(ACTIVE_MODEL_PATH)
+    if exp_sha:
+        ok_mdl, reason_mdl = verify_file_integrity(ACTIVE_MODEL_PATH, exp_sha, exp_size)
+        if not ok_mdl:
+            logging.error(f"Refusing local model load due to integrity failure ({reason_mdl}).")
+            return False
+
     threads = get_hardware_summary().get("opt_threads_num", "4")
     cmd = [
         WHISPER_SERVER,
@@ -266,6 +297,7 @@ def ensure_whisper_server():
         logging.info(f"Starting in-memory whisper server: {' '.join(cmd)}")
         creationflags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
         server_log_file = open(SERVER_LOG_FILE, "w", encoding="utf-8")
+        harden_path_acl(SERVER_LOG_FILE, is_dir=False)
         server_process = subprocess.Popen(
             cmd, stdout=server_log_file, stderr=subprocess.STDOUT, creationflags=creationflags
         )
@@ -277,7 +309,7 @@ def ensure_whisper_server():
         logging.warning("whisper-server did not respond within timeout. Falling back to CLI.")
         return False
     except Exception as e:
-        logging.warning(f"Could not launch whisper-server: {e}. Will use CLI fallback.")
+        logging.warning(f"Could not launch whisper-server: {safe_error_summary(e)}. Will use CLI fallback.")
         return False
 
 
@@ -600,10 +632,12 @@ def paste_text(text, target_hwnd=None):
     time.sleep(0.015)
 
     old_clipboard = None
-    try:
-        old_clipboard = pyperclip.paste()
-    except Exception:
-        pass
+    use_zero_clip = bool(CONFIG.get("zero_clipboard_typing", False))
+    if not use_zero_clip:
+        try:
+            old_clipboard = pyperclip.paste()
+        except Exception:
+            pass
 
     if target_hwnd and ctypes.windll.user32.IsWindow(target_hwnd):
         try:
@@ -622,19 +656,23 @@ def paste_text(text, target_hwnd=None):
         except Exception:
             pass
 
+    if use_zero_clip:
+        if not send_text_unicode(text):
+            logging.warning("Zero-clipboard SendInput typing failed.")
+        return
+
     try:
-        pyperclip.copy(text)
+        copy_private_clipboard(text)
         time.sleep(0.02)
         keyboard.send("ctrl+v")
         time.sleep(0.03)
     except Exception as e:
-        logging.warning(f"Clipboard paste failed: {e}")
+        logging.warning(f"Clipboard paste failed: {safe_error_summary(e)}")
 
     def _restore_clipboard():
         try:
-            time.sleep(0.45)
-            if old_clipboard is not None:
-                pyperclip.copy(old_clipboard)
+            time.sleep(0.20)
+            copy_private_clipboard(old_clipboard if old_clipboard is not None else "")
         except Exception:
             pass
 
@@ -680,9 +718,10 @@ def set_active_model(model_name):
 
 
 def _start_control_listener():
-    """Listen on UDP 48766 so HushFlow Studio can hot-reload config, mic, HUD visibility, or model."""
+    """Listen on authenticated UDP 48766 so HushFlow Studio can hot-reload config, mic, HUD visibility, or model."""
     def _worker():
         global CONFIG, CLEANUP_LEVEL
+        seen_nonces = {}
         try:
             sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             sock.bind(("127.0.0.1", ENGINE_CTL_PORT))
@@ -692,21 +731,24 @@ def _start_control_listener():
 
         while not _shutdown_flag.is_set():
             try:
-                data, _ = sock.recvfrom(4096)
-                msg = json.loads(data.decode("utf-8"))
+                data, _ = sock.recvfrom(8192)
+                msg = verify_ipc_packet(data, USER_DATA_DIR, max_bytes=4096, seen_nonces=seen_nonces)
+                if not isinstance(msg, dict):
+                    continue
                 cmd = msg.get("cmd")
                 if cmd == "reload_config":
                     old_mic = CONFIG.get("mic_device")
                     old_model = CONFIG.get("model")
-                    old_key = CONFIG.get("groq_api_key")
+                    old_key = get_groq_api_key(CONFIG)
                     CONFIG = load_config()
                     CLEANUP_LEVEL = CONFIG.get("cleanup_level", "medium").lower()
                     if _hud_ref is not None:
                         _hud_ref.set_visible(bool(CONFIG.get("hud_visible", True)))
                     if CONFIG.get("mic_device") != old_mic:
                         _reload_mic_flag.set()
-                    if CONFIG.get("groq_api_key") != old_key:
-                        GROQ_POOL.warmup_async(get_groq_api_key(CONFIG))
+                    new_key = get_groq_api_key(CONFIG)
+                    if new_key != old_key:
+                        GROQ_POOL.warmup_async(new_key)
                     if CONFIG.get("model") != old_model:
                         threading.Thread(target=set_active_model, args=(CONFIG.get("model"),), daemon=True).start()
                 elif cmd == "stop":
@@ -727,7 +769,7 @@ def stop_running_engine():
     """Cleanly terminate any active HushFlow Engine and whisper-server processes."""
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        sock.sendto(b'{"cmd":"stop"}', ("127.0.0.1", ENGINE_CTL_PORT))
+        sock.sendto(sign_ipc_payload({"cmd": "stop"}, USER_DATA_DIR), ("127.0.0.1", ENGINE_CTL_PORT))
         sock.close()
         time.sleep(0.4)
     except Exception:
@@ -916,7 +958,7 @@ def main():
         return s
 
     stream = _open_audio_stream()
-    temp_wav = os.path.join(tempfile.gettempdir(), "hushflow_fallback_tmp.wav")
+    temp_wav = os.path.join(USER_DATA_DIR, ".fallback_tmp.wav")
 
     def _start_new_session():
         nonlocal active_session
@@ -1056,12 +1098,13 @@ def main():
                         except Exception:
                             pass
 
-                        # Strictly honor save_training_audio opt-in: zero temp WAV writes unless opted in
+                        # Strictly honor save_training_audio opt-in: store temp snapshots only in private vault if opted in
                         last_wav_snapshot = None
                         if CONFIG.get("save_training_audio", False):
-                            last_wav_snapshot = os.path.join(tempfile.gettempdir(), f"hushflow_last_{int(time.time())}.wav")
+                            last_wav_snapshot = os.path.join(USER_DATA_DIR, f".hushflow_last_{int(time.time())}.wav")
                             try:
                                 wav.write(last_wav_snapshot, SAMPLE_RATE, audio_data)
+                                harden_path_acl(last_wav_snapshot, is_dir=False)
                             except Exception:
                                 last_wav_snapshot = None
 
@@ -1069,7 +1112,8 @@ def main():
                             "text": cleaned_text,
                             "wav_path": last_wav_snapshot,
                             "hwnd": target_hwnd,
-                            "window_title": target_title,
+                            "window_category": classify_window_category(target_title),
+                            "window_title": "",
                             "timestamp": time.time(),
                         }
 
