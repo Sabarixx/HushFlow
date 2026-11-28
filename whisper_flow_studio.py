@@ -38,14 +38,18 @@ from app_paths import (
     USER_DATA_DIR,
     canonical_model_key,
     ensure_initialized,
+    fallback_model_exists,
+    get_groq_api_key,
     get_hardware_summary,
     get_input_devices,
     get_vault_disk_usage_bytes,
+    is_cloud_model,
     load_config,
     model_exists,
     purge_vault_audio_and_logs,
     save_config,
 )
+from asr_pipeline import GROQ_POOL
 from brand_assets import get_app_icon_path, get_app_logo_path
 from studio_ui import build_studio_html
 
@@ -267,15 +271,29 @@ class StudioBridge:
         running, pids = check_engine_running()
         m_key = canonical_model_key(cfg.get("model"))
         meta = MODEL_REGISTRY[m_key]
-        ready = model_exists(m_key)
+        cloud = is_cloud_model(m_key)
+        groq_key = get_groq_api_key(cfg)
+        has_groq_key = bool(groq_key)
+        fb_ready = fallback_model_exists(cfg)
+        ready = (has_groq_key or fb_ready) if cloud else model_exists(m_key)
+        masked_key = ""
+        if groq_key:
+            masked_key = (groq_key[:6] + "..." + groq_key[-4:]) if len(groq_key) > 10 else "configured"
+
+        safe_cfg = dict(cfg)
+        safe_cfg["groq_api_key"] = ""
         used_mb = get_vault_disk_usage_bytes() / (1024 * 1024)
         return {
             "version": APP_VERSION,
             "running": running,
             "pids": pids,
-            "cfg": cfg,
+            "cfg": safe_cfg,
             "hw": self._hw,
             "devices": self._devices,
+            "is_cloud": cloud,
+            "has_groq_key": has_groq_key,
+            "groq_key_masked": masked_key,
+            "fallback_ready": fb_ready,
             "model_ready": ready,
             "model_size_mb": meta["size_mb"],
             "model_ram": meta["ram_mb"],
@@ -307,12 +325,10 @@ class StudioBridge:
                     creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP,
                 )
             for _ in range(18):
-                time.sleep(0.45)
-                try:
-                    if requests.get(SERVER_HEALTH_URL, timeout=0.5).status_code == 200:
-                        break
-                except Exception:
-                    pass
+                time.sleep(0.25)
+                eng_up, _ = check_engine_running()
+                if eng_up:
+                    break
         return self.get_snapshot()
 
     def _stop_engine_sync(self):
@@ -397,14 +413,35 @@ class StudioBridge:
         cfg = load_config()
         cfg["model"] = key
         save_config(cfg)
-        if model_exists(key):
+        if is_cloud_model(key) or model_exists(key):
             send_engine_command("reload_config")
         return self.get_snapshot()
+
+    def save_groq_api_key(self, api_key: str, test_connection: bool = True) -> Dict:
+        cleaned = (api_key or "").strip()
+        cfg = load_config()
+        cfg["groq_api_key"] = cleaned
+        save_config(cfg)
+        send_engine_command("reload_config")
+
+        key_valid = False
+        key_message = "Key cleared (using local fallback)."
+        if cleaned:
+            if test_connection:
+                key_valid, key_message = GROQ_POOL.validate_key(cleaned)
+            else:
+                key_valid, key_message = True, "Groq API key saved."
+        snap = self.get_snapshot()
+        snap["key_valid"] = key_valid
+        snap["key_message"] = key_message
+        return snap
 
     def download_model(self, model_key: str) -> Dict:
         if self._downloading_model:
             return self.get_snapshot()
         key = canonical_model_key(model_key)
+        if is_cloud_model(key):
+            return self.get_snapshot()
         meta = MODEL_REGISTRY[key]
         os.makedirs(MODELS_DIR, exist_ok=True)
         dest_path = os.path.join(MODELS_DIR, meta["filename"])

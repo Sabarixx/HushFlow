@@ -41,10 +41,21 @@ from app_paths import (
     canonical_model_key,
     ensure_initialized,
     find_binary,
+    get_groq_api_key,
     get_hardware_summary,
+    is_cloud_model,
     load_config,
     resolve_model_path,
     save_config,
+)
+from asr_pipeline import (
+    ASREngine,
+    GROQ_POOL,
+    StreamingVADSession,
+    calculate_audio_rms,
+    encode_wav_bytes,
+    is_audio_silent,
+    is_hallucination_or_empty,
 )
 from brand_assets import render_tray_icon
 
@@ -114,6 +125,7 @@ ACTIVE_MODEL_PATH = resolve_model_path(CONFIG.get("model"))
 SAMPLE_RATE = 16000
 CHANNELS = 1
 SERVER_URL = "http://127.0.0.1:8080"
+ASR_ENGINE = ASREngine(http_session=HTTP_SESSION, server_url=SERVER_URL, whisper_cli_path=WHISPER_CLI)
 server_process = None
 _hud_ref = None
 _reload_mic_flag = threading.Event()
@@ -243,6 +255,9 @@ def ensure_whisper_server():
         "--port", "8080",
         "-l", "en",
         "-t", threads,
+        "-bo", "1",
+        "-bs", "1",
+        "-fa",
         "-nt",
         "-sns",
         "-nth", "0.65",
@@ -356,6 +371,7 @@ class HotkeyStateController:
         tap_max_sec: float = 0.38,
         double_tap_gap_sec: float = 0.52,
         ptt_grace_sec: float = 0.45,
+        long_hold_grace_sec: float = None,
         toggle_debounce_sec: float = 0.45,
         lock_stop_guard_sec: float = 0.40,
         max_locked_sec: float = 900.0,
@@ -363,6 +379,7 @@ class HotkeyStateController:
         self.tap_max_sec = tap_max_sec
         self.double_tap_gap_sec = double_tap_gap_sec
         self.ptt_grace_sec = ptt_grace_sec
+        self.long_hold_grace_sec = ptt_grace_sec if long_hold_grace_sec is None else long_hold_grace_sec
         self.toggle_debounce_sec = toggle_debounce_sec
         self.lock_stop_guard_sec = lock_stop_guard_sec
         self.max_locked_sec = max_locked_sec
@@ -374,6 +391,7 @@ class HotkeyStateController:
         self._ptt_start_time = -10.0
         self._ptt_press_time = None
         self._ptt_release_time = None
+        self._last_hold_dur = 0.0
         self._last_short_tap_release_time = None
         self._last_toggle_time = -10.0
         self._lock_engaged_time = -10.0
@@ -383,6 +401,7 @@ class HotkeyStateController:
         self.mode = "idle"
         self._ptt_press_time = None
         self._ptt_release_time = None
+        self._last_hold_dur = 0.0
         self._await_lock_release = False
         if clear_tap_history:
             self._last_short_tap_release_time = None
@@ -470,9 +489,11 @@ class HotkeyStateController:
             if hotkey_fall:
                 self._ptt_release_time = now
                 hold_dur = now - (self._ptt_press_time if self._ptt_press_time is not None else now)
+                self._last_hold_dur = hold_dur
                 self._last_short_tap_release_time = now if hold_dur <= self.tap_max_sec else None
 
-            if self._ptt_release_time is not None and (now - self._ptt_release_time) >= self.ptt_grace_sec:
+            active_grace = self.long_hold_grace_sec if self._last_hold_dur > self.tap_max_sec else self.ptt_grace_sec
+            if self._ptt_release_time is not None and (now - self._ptt_release_time) >= active_grace:
                 self._reset_to_idle(clear_tap_history=False)
                 return "transcribe"
             return "none"
@@ -493,46 +514,6 @@ class HotkeyStateController:
             return "start_ptt"
 
         return "none"
-
-
-MIN_AUDIO_DURATION = 0.35
-
-
-def calculate_audio_rms(audio_data):
-    if len(audio_data) == 0:
-        return 0.0
-    samples = audio_data.astype(np.float64).flatten()
-    return float(np.sqrt(np.mean(samples ** 2)))
-
-
-def is_audio_silent(audio_data, duration_sec):
-    if duration_sec < MIN_AUDIO_DURATION:
-        return True
-    if duration_sec < 1.0:
-        peak = float(np.max(np.abs(audio_data)))
-        rms = calculate_audio_rms(audio_data)
-        if peak < 500 and rms < 130.0:
-            return True
-    return False
-
-
-HALLUCINATION_BLACKLIST = {
-    "[blank_audio]", "[silence]", "(silence)", "(music)", "(applause)",
-    "[applause]", "(bell rings)", "[whispering]", "(whispering)", ".", "you", "thank you.",
-}
-
-
-def is_hallucination_or_empty(text: str) -> bool:
-    if not text:
-        return True
-    cleaned = text.strip()
-    if not cleaned or len(cleaned) <= 1:
-        return True
-    if cleaned.lower() in HALLUCINATION_BLACKLIST:
-        return True
-    if "Numbers, OTPs, codes" in cleaned:
-        return True
-    return False
 
 
 def get_active_window_prompt():
@@ -578,77 +559,30 @@ def get_active_window_prompt():
 
 
 def transcribe_audio(audio_source, temp_wav_path=None):
-    """
-    In-memory transcription directly from RAM (BytesIO WAV -> HTTP POST).
-    Falls back cleanly to whisper-cli.exe only if whisper-server is unreachable.
-    """
+    """In-memory transcription using active ASR engine (Groq Cloud Turbo + local whisper fallback)."""
     prompt = get_active_window_prompt()
 
     wav_bytes = None
+    dur = 0.0
     if isinstance(audio_source, np.ndarray):
-        buf = io.BytesIO()
-        wav.write(buf, SAMPLE_RATE, audio_source)
-        wav_bytes = buf.getvalue()
+        wav_bytes = encode_wav_bytes(audio_source, SAMPLE_RATE)
+        dur = len(audio_source) / SAMPLE_RATE
     elif isinstance(audio_source, (bytes, bytearray)):
-        wav_bytes = audio_source
+        wav_bytes = bytes(audio_source)
     elif isinstance(audio_source, str) and os.path.exists(audio_source):
         with open(audio_source, "rb") as f:
             wav_bytes = f.read()
 
-    dyn_timeout = max(60.0, (len(audio_source) / SAMPLE_RATE * 3.0) if isinstance(audio_source, np.ndarray) else 60.0)
-    if is_server_healthy() and wav_bytes:
-        try:
-            files = {"file": ("audio.wav", wav_bytes, "audio/wav")}
-            data = {"temperature": "0.0", "response_format": "json", "prompt": prompt}
-            resp = HTTP_SESSION.post(f"{SERVER_URL}/inference", files=files, data=data, timeout=dyn_timeout)
-            if resp.status_code == 200:
-                return resp.json().get("text", "").strip()
-        except Exception as e:
-            logging.warning(f"whisper-server inference failed: {e}. Falling back to CLI.")
-
-    # Strategy 2: CLI fallback (temp file written and immediately deleted)
-    created_temp = False
-    target_wav = audio_source if isinstance(audio_source, str) else None
-    if not target_wav and wav_bytes and temp_wav_path:
-        with open(temp_wav_path, "wb") as f:
-            f.write(wav_bytes)
-        target_wav = temp_wav_path
-        created_temp = True
-
-    threads = get_hardware_summary().get("opt_threads_num", "4")
-    try:
-        if target_wav and os.path.exists(target_wav) and os.path.exists(WHISPER_CLI):
-            cmd = [
-                WHISPER_CLI,
-                "-m", resolve_model_path(CONFIG.get("model")),
-                "-f", target_wav,
-                "-nt",
-                "-np",
-                "-t", threads,
-                "-fa",
-                "-nth", "0.65",
-                "-sns",
-                "--prompt", prompt,
-            ]
-            res = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                timeout=dyn_timeout,
-                creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
-            )
-            return res.stdout.strip()
-    except Exception as e:
-        logging.error(f"whisper-cli execution failed: {e}")
-    finally:
-        if created_temp and target_wav and os.path.exists(target_wav):
-            try:
-                os.remove(target_wav)
-            except Exception:
-                pass
-
-    return ""
+    if not wav_bytes:
+        return ""
+    text, _ = ASR_ENGINE.transcribe_wav_bytes(
+        wav_bytes=wav_bytes,
+        config=CONFIG,
+        prompt=prompt,
+        temp_wav_path=temp_wav_path,
+        duration_sec=dur,
+    )
+    return text
 
 
 def paste_text(text, target_hwnd=None):
@@ -656,14 +590,14 @@ def paste_text(text, target_hwnd=None):
         return
 
     start = time.time()
-    while time.time() - start < 0.5:
+    while time.time() - start < 0.35:
         alt = is_key_pressed(0x12) or is_key_pressed(0xA4) or is_key_pressed(0xA5)
         ctrl = is_key_pressed(0x11) or is_key_pressed(0xA2) or is_key_pressed(0xA3)
         win = is_key_pressed(0x5B) or is_key_pressed(0x5C)
         if not (alt or ctrl or win):
             break
-        time.sleep(0.02)
-    time.sleep(0.04)
+        time.sleep(0.01)
+    time.sleep(0.015)
 
     old_clipboard = None
     try:
@@ -684,21 +618,21 @@ def paste_text(text, target_hwnd=None):
                     ctypes.windll.user32.AttachThreadInput(cur_thread, target_thread, False)
                 else:
                     ctypes.windll.user32.SetForegroundWindow(target_hwnd)
-            time.sleep(0.04)
+            time.sleep(0.02)
         except Exception:
             pass
 
     try:
         pyperclip.copy(text)
-        time.sleep(0.04)
+        time.sleep(0.02)
         keyboard.send("ctrl+v")
-        time.sleep(0.06)
+        time.sleep(0.03)
     except Exception as e:
         logging.warning(f"Clipboard paste failed: {e}")
 
     def _restore_clipboard():
         try:
-            time.sleep(0.5)
+            time.sleep(0.45)
             if old_clipboard is not None:
                 pyperclip.copy(old_clipboard)
         except Exception:
@@ -726,13 +660,21 @@ def set_cleanup_level(level, hud=None):
 def set_active_model(model_name):
     global ACTIVE_MODEL_PATH, CONFIG
     key = canonical_model_key(model_name)
+    if is_cloud_model(key):
+        CONFIG = load_config()
+        CONFIG["model"] = key
+        save_config(CONFIG)
+        GROQ_POOL.warmup_async(get_groq_api_key(CONFIG))
+        logging.info(f"Active model set to cloud engine: {key}")
+        return
+
     cand = resolve_model_path(key, fallback_any=False)
     if os.path.exists(cand):
         ACTIVE_MODEL_PATH = cand
         CONFIG = load_config()
         CONFIG["model"] = key
         save_config(CONFIG)
-        logging.info(f"Active model set to {key} ({ACTIVE_MODEL_PATH})")
+        logging.info(f"Active model set to local GGML: {key} ({ACTIVE_MODEL_PATH})")
         cleanup_server()
         ensure_whisper_server()
 
@@ -756,12 +698,15 @@ def _start_control_listener():
                 if cmd == "reload_config":
                     old_mic = CONFIG.get("mic_device")
                     old_model = CONFIG.get("model")
+                    old_key = CONFIG.get("groq_api_key")
                     CONFIG = load_config()
                     CLEANUP_LEVEL = CONFIG.get("cleanup_level", "medium").lower()
                     if _hud_ref is not None:
                         _hud_ref.set_visible(bool(CONFIG.get("hud_visible", True)))
                     if CONFIG.get("mic_device") != old_mic:
                         _reload_mic_flag.set()
+                    if CONFIG.get("groq_api_key") != old_key:
+                        GROQ_POOL.warmup_async(get_groq_api_key(CONFIG))
                     if CONFIG.get("model") != old_model:
                         threading.Thread(target=set_active_model, args=(CONFIG.get("model"),), daemon=True).start()
                 elif cmd == "stop":
@@ -815,6 +760,7 @@ def main():
     _start_control_listener()
 
     threading.Thread(target=ensure_whisper_server, daemon=True).start()
+    GROQ_POOL.warmup_async(get_groq_api_key(CONFIG))
 
     pending_pill_lock = threading.Lock()
     pending_pill_action = None
@@ -876,21 +822,32 @@ def main():
                 "Speech Model",
                 pystray.Menu(
                     pystray.MenuItem(
-                        "Small English (Balanced)",
+                        "Groq Whisper Large v3 Turbo (Cloud • Ultra-Fast)",
+                        lambda icon, item: set_active_model("groq-whisper-large-v3-turbo"),
+                        checked=lambda item: canonical_model_key(CONFIG.get("model")) == "groq-whisper-large-v3-turbo",
+                    ),
+                    pystray.MenuItem(
+                        "Groq Whisper Large v3 (Cloud • Max Accuracy)",
+                        lambda icon, item: set_active_model("groq-whisper-large-v3"),
+                        checked=lambda item: canonical_model_key(CONFIG.get("model")) == "groq-whisper-large-v3",
+                    ),
+                    pystray.Menu.SEPARATOR,
+                    pystray.MenuItem(
+                        "Small English (Local Offline)",
                         lambda icon, item: set_active_model("small.en-q5_1"),
-                        checked=lambda item: "small" in ACTIVE_MODEL_PATH,
+                        checked=lambda item: canonical_model_key(CONFIG.get("model")) == "small.en-q5_1",
                         enabled=lambda item: os.path.exists(resolve_model_path("small.en-q5_1", fallback_any=False)),
                     ),
                     pystray.MenuItem(
-                        "Large v3 Turbo (High Accuracy)",
+                        "Large v3 Turbo (Local Offline)",
                         lambda icon, item: set_active_model("large-v3-turbo"),
-                        checked=lambda item: "large-v3-turbo" in ACTIVE_MODEL_PATH,
+                        checked=lambda item: canonical_model_key(CONFIG.get("model")) == "large-v3-turbo",
                         enabled=lambda item: os.path.exists(resolve_model_path("large-v3-turbo", fallback_any=False)),
                     ),
                     pystray.MenuItem(
-                        "Base English (Ultra-Light)",
+                        "Base English (Local Ultra-Light)",
                         lambda icon, item: set_active_model("base.en"),
-                        checked=lambda item: "base" in ACTIVE_MODEL_PATH,
+                        checked=lambda item: canonical_model_key(CONFIG.get("model")) == "base.en",
                         enabled=lambda item: os.path.exists(resolve_model_path("base.en", fallback_any=False)),
                     ),
                 ),
@@ -909,11 +866,12 @@ def main():
     except Exception as e:
         logging.warning(f"Could not initialize system tray icon: {e}")
 
-    audio_frames = []
+    active_session = None
+    session_lock = threading.Lock()
     is_recording = False
     is_hands_free = False
     locked_target_hwnd = None
-    controller = HotkeyStateController()
+    controller = HotkeyStateController(long_hold_grace_sec=0.06)
     stream = None
 
     def _safe_tray_update(state: str, title: str):
@@ -935,7 +893,10 @@ def main():
 
     def audio_callback(indata, frames, time_info, status):
         if is_recording:
-            audio_frames.append(indata.copy())
+            with session_lock:
+                sess = active_session
+            if sess is not None:
+                sess.feed(indata)
             if hud:
                 peak = float(np.max(np.abs(indata)))
                 hud.set_audio_level(min(1.0, peak / 2500.0))
@@ -956,6 +917,21 @@ def main():
 
     stream = _open_audio_stream()
     temp_wav = os.path.join(tempfile.gettempdir(), "hushflow_fallback_tmp.wav")
+
+    def _start_new_session():
+        nonlocal active_session
+        prompt = get_active_window_prompt()
+        streaming_on = bool(CONFIG.get("streaming_vad_enabled", True))
+        sess = StreamingVADSession(
+            engine=ASR_ENGINE,
+            config=CONFIG,
+            base_prompt=prompt,
+            temp_wav_path=temp_wav,
+            sample_rate=SAMPLE_RATE,
+            enabled=streaming_on,
+        )
+        with session_lock:
+            active_session = sess
 
     try:
         keyboard.add_hotkey("ctrl+shift+q", lambda: _shutdown_flag.set())
@@ -997,7 +973,7 @@ def main():
 
             if action == "start_ptt":
                 locked_target_hwnd = _capture_active_target_hwnd()
-                audio_frames = []
+                _start_new_session()
                 is_hands_free = False
                 is_recording = True
                 play_beep_async(900, 60)
@@ -1008,7 +984,7 @@ def main():
 
             elif action == "start_locked":
                 locked_target_hwnd = _capture_active_target_hwnd()
-                audio_frames = []
+                _start_new_session()
                 is_hands_free = True
                 is_recording = True
                 play_beep_async(1180, 75)
@@ -1018,7 +994,7 @@ def main():
                 _safe_tray_update("recording", f"{APP_NAME} — Hands-Free Locked")
 
             elif action == "upgrade_to_locked":
-                # Keep all audio already recorded since Tap 1 intact
+                # Keep all audio & live streaming session already started on Tap 1 intact
                 is_hands_free = True
                 is_recording = True
                 play_beep_async(1180, 75)
@@ -1030,7 +1006,11 @@ def main():
             elif action == "cancel" and is_recording:
                 is_recording = False
                 is_hands_free = False
-                audio_frames = []
+                with session_lock:
+                    sess = active_session
+                    active_session = None
+                if sess is not None:
+                    sess.cancel()
                 play_beep_async(420, 55)
                 if hud:
                     hud.set_state("idle")
@@ -1040,68 +1020,74 @@ def main():
             elif action == "transcribe" and is_recording:
                 is_recording = False
                 is_hands_free = False
-                time.sleep(0.08)
+                with session_lock:
+                    sess = active_session
+                    active_session = None
+
                 play_beep_async(650, 60)
                 notify_studio({"type": "state", "state": "transcribing"})
                 if hud:
                     hud.set_state("transcribing")
                 _safe_tray_update("transcribing", f"{APP_NAME} — Transcribing...")
 
-                if len(audio_frames) > 0:
-                    audio_data = np.concatenate(audio_frames, axis=0)
-                    duration_sec = len(audio_data) / SAMPLE_RATE
+                if sess is not None:
+                    t_rel = time.perf_counter()
+                    raw_text, audio_data, duration_sec, backend_used = sess.finish()
+                    rel_ms = (time.perf_counter() - t_rel) * 1000.0
 
-                    if is_audio_silent(audio_data, duration_sec):
+                    if len(audio_data) == 0 or is_audio_silent(audio_data, duration_sec):
                         if hud:
                             hud.set_state("idle")
                         notify_studio({"type": "state", "state": "idle"})
-                    else:
-                        raw_text = transcribe_audio(audio_data, temp_wav_path=temp_wav)
-                        if raw_text and not is_hallucination_or_empty(raw_text):
-                            cleaned_text = apply_smart_cleanup(raw_text, level=CLEANUP_LEVEL, config=CONFIG)
-                            logging.info(f"Transcribed ({duration_sec:.1f}s): len={len(cleaned_text)}")
+                    elif raw_text and not is_hallucination_or_empty(raw_text):
+                        cleaned_text = apply_smart_cleanup(raw_text, level=CLEANUP_LEVEL, config=CONFIG)
+                        logging.info(
+                            f"Transcribed ({duration_sec:.1f}s audio, {rel_ms:.0f}ms post-release, {backend_used}): len={len(cleaned_text)}"
+                        )
 
-                            target_hwnd = _capture_active_target_hwnd() or locked_target_hwnd
-                            target_title = ""
+                        target_hwnd = _capture_active_target_hwnd() or locked_target_hwnd
+                        target_title = ""
+                        try:
+                            tl = ctypes.windll.user32.GetWindowTextLengthW(target_hwnd)
+                            if tl > 0:
+                                tbuf = ctypes.create_unicode_buffer(tl + 1)
+                                ctypes.windll.user32.GetWindowTextW(target_hwnd, tbuf, tl + 1)
+                                target_title = tbuf.value
+                        except Exception:
+                            pass
+
+                        # Strictly honor save_training_audio opt-in: zero temp WAV writes unless opted in
+                        last_wav_snapshot = None
+                        if CONFIG.get("save_training_audio", False):
+                            last_wav_snapshot = os.path.join(tempfile.gettempdir(), f"hushflow_last_{int(time.time())}.wav")
                             try:
-                                tl = ctypes.windll.user32.GetWindowTextLengthW(target_hwnd)
-                                if tl > 0:
-                                    tbuf = ctypes.create_unicode_buffer(tl + 1)
-                                    ctypes.windll.user32.GetWindowTextW(target_hwnd, tbuf, tl + 1)
-                                    target_title = tbuf.value
+                                wav.write(last_wav_snapshot, SAMPLE_RATE, audio_data)
                             except Exception:
-                                pass
+                                last_wav_snapshot = None
 
-                            # Strictly honor save_training_audio opt-in: zero temp WAV writes unless opted in
-                            last_wav_snapshot = None
-                            if CONFIG.get("save_training_audio", False):
-                                last_wav_snapshot = os.path.join(tempfile.gettempdir(), f"hushflow_last_{int(time.time())}.wav")
-                                try:
-                                    wav.write(last_wav_snapshot, SAMPLE_RATE, audio_data)
-                                except Exception:
-                                    last_wav_snapshot = None
+                        last_dictation_event = {
+                            "text": cleaned_text,
+                            "wav_path": last_wav_snapshot,
+                            "hwnd": target_hwnd,
+                            "window_title": target_title,
+                            "timestamp": time.time(),
+                        }
 
-                            last_dictation_event = {
-                                "text": cleaned_text,
-                                "wav_path": last_wav_snapshot,
-                                "hwnd": target_hwnd,
-                                "window_title": target_title,
-                                "timestamp": time.time(),
-                            }
-
-                            paste_text(cleaned_text, target_hwnd=target_hwnd)
-                            notify_studio({
-                                "type": "transcript",
-                                "raw": raw_text,
-                                "cleaned": cleaned_text,
-                                "ts": time.strftime("%H:%M:%S"),
-                            })
-                            if hud:
-                                hud.set_state("done", text="Done")
-                        else:
-                            if hud:
-                                hud.set_state("idle")
-                            notify_studio({"type": "state", "state": "idle"})
+                        paste_text(cleaned_text, target_hwnd=target_hwnd)
+                        notify_studio({
+                            "type": "transcript",
+                            "raw": raw_text,
+                            "cleaned": cleaned_text,
+                            "backend": backend_used,
+                            "latency_ms": round(rel_ms),
+                            "ts": time.strftime("%H:%M:%S"),
+                        })
+                        if hud:
+                            hud.set_state("done", text="Done")
+                    else:
+                        if hud:
+                            hud.set_state("idle")
+                        notify_studio({"type": "state", "state": "idle"})
                 else:
                     if hud:
                         hud.set_state("idle")

@@ -267,6 +267,86 @@ def test_double_tap_lock_and_hud_pill():
     print("  [PASS] Double-Tap Lock, Long Dictation State Machine & HUD Pill Controls passed 100%.\n")
 
 
+def test_streaming_vad_and_groq_pipeline():
+    print("[TEST 8/8] Testing Live VAD Chunked Streaming, Fast Grace & Cloud/Fallback Pipeline...")
+    import asr_pipeline as ap
+
+    # 1. WAV byte encoding parity with stdlib wave
+    samples = (np.sin(np.linspace(0, 100, 16000)) * 12000).astype(np.int16)
+    fast_wav = ap.encode_wav_bytes(samples, 16000)
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(16000)
+        w.writeframes(samples.tobytes())
+    assert fast_wav == buf.getvalue(), "encode_wav_bytes must produce exact RIFF/PCM WAV bytes"
+
+    # 2. StreamingVADSession splits on pause during active recording and completes before finish()
+    dispatched = []
+
+    class MockEngine:
+        def transcribe_wav_bytes(self, wav_bytes, config, prompt="", temp_wav_path=None, duration_sec=0.0):
+            idx = len(dispatched) + 1
+            dispatched.append((duration_sec, prompt))
+            return f"segment {idx}", "mock:groq"
+
+    sess = ap.StreamingVADSession(
+        engine=MockEngine(),
+        config={"model": "groq-whisper-large-v3-turbo"},
+        base_prompt="vocab",
+        min_chunk_sec=1.6,
+        silence_split_sec=0.32,
+        enabled=True,
+    )
+    speech_block = (np.sin(np.linspace(0, 400, 3200)) * 6000).astype(np.int16).reshape(-1, 1)  # 0.2s loud
+    silence_block = np.zeros((3200, 1), dtype=np.int16)  # 0.2s quiet
+    for _ in range(9):  # 1.8s speech
+        sess.feed(speech_block)
+    for _ in range(2):  # 0.4s silence pause -> triggers background split
+        sess.feed(silence_block)
+    time.sleep(0.15)
+    assert len(dispatched) == 1, f"Expected 1 background chunk dispatched during pause, got {len(dispatched)}"
+
+    for _ in range(4):  # 0.8s tail speech
+        sess.feed(speech_block)
+    merged, full_audio, total_dur, backend = sess.finish()
+    assert len(dispatched) == 2
+    assert merged == "segment 1 segment 2"
+    assert backend == "mock:groq"
+    assert "segment 1" in dispatched[1][1], "Second chunk prompt should carry prior chunk context"
+
+    # 3. Long-hold fast release grace (60ms) preserves 450ms double-tap window on short taps
+    c_fast = wf.HotkeyStateController(long_hold_grace_sec=0.06)
+    assert c_fast.step(0.00, True, False, False, {"double_tap_lock": True}) == "start_ptt"
+    assert c_fast.step(0.80, False, False, False, {"double_tap_lock": True}) == "none"
+    assert c_fast.step(0.87, False, False, False, {"double_tap_lock": True}) == "transcribe"
+
+    # 4. Studio UI & Bridge expose Groq API key & streaming toggle safely without leaking raw key
+    html = build_studio_html(wfs._load_logo_data_uri())
+    assert "in-groq-key" in html and "chk-streaming-vad" in html
+    assert "groq-whisper-large-v3-turbo" in html
+    assert "https://cdn" not in html and "unpkg.com" not in html
+
+    cfg_orig = app_paths.load_config()
+    try:
+        bridge = wfs.StudioBridge()
+        snap = bridge.save_groq_api_key("gsk_test_1234567890abcd", test_connection=False)
+        assert snap["has_groq_key"] is True
+        assert snap["cfg"]["groq_api_key"] == "", "Snapshot must mask raw API key"
+        assert snap["groq_key_masked"] == "gsk_te...abcd"
+    finally:
+        app_paths.save_config(cfg_orig)
+
+    # 5. Cleanup medium never blocks on network; high falls back cleanly if invalid/offline
+    t0 = time.perf_counter()
+    res_med = apply_smart_cleanup("um hello world", level="medium", config={"groq_api_key": ""})
+    assert res_med == "Hello world."
+    assert (time.perf_counter() - t0) < 0.1
+
+    print("  [PASS] Live VAD Streaming, Fast Grace & Cloud/Fallback Pipeline passed 100%.\n")
+
+
 if __name__ == "__main__":
     print("==================================================")
     print("  HushFlow Production Verification Suite")
@@ -278,6 +358,7 @@ if __name__ == "__main__":
     test_live_server_inference()
     test_hushflow_studio_and_assets()
     test_double_tap_lock_and_hud_pill()
+    test_streaming_vad_and_groq_pipeline()
     print("==================================================")
-    print("  ALL 7 CRITICAL TEST SUITES PASSED (100% GREEN)")
+    print("  ALL 8 CRITICAL TEST SUITES PASSED (100% GREEN)")
     print("==================================================")

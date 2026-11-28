@@ -1,5 +1,5 @@
 #define MyAppName "HushFlow"
-#define MyAppVersion "2.1.0"
+#define MyAppVersion "2.2.0"
 #define MyAppPublisher "HushFlow"
 #define MyAppURL "https://github.com/Sabarixx/HushFlow"
 #define MyAppExeName "HushFlow.exe"

@@ -66,7 +66,7 @@ if (-not $Iscc) { throw "Inno Setup 6 (ISCC.exe) not found. Install via: winget 
 & $Iscc "$ScriptDir\HushFlow.iss"
 if ($LASTEXITCODE -ne 0) { throw "Inno Setup compilation failed." }
 
-$SetupExe = "$RootDir\dist\HushFlow-Setup-2.1.0.exe"
+$SetupExe = "$RootDir\dist\HushFlow-Setup-2.2.0.exe"
 if ($PfxPath -or $CertThumbprint) {
     Invoke-CodeSign $SetupExe
 }

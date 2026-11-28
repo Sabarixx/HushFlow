@@ -11,6 +11,16 @@ import logging
 import urllib.request
 import urllib.error
 
+try:
+    from groq import Groq
+    _GROQ_AVAILABLE = True
+except ImportError:
+    Groq = None
+    _GROQ_AVAILABLE = False
+
+_CLEANUP_GROQ_KEY = ""
+_CLEANUP_GROQ_CLIENT = None
+
 # Common vocal fillers to eliminate
 FILLER_PATTERNS = [
     r"\b(um|uh|uhm|umm|ah|er|eh|hmm|uh-huh)\b[,.]?",
@@ -364,46 +374,82 @@ def format_text(text: str) -> str:
             text += "."
     return text
 
+def _get_cleanup_groq_client(api_key: str):
+    global _CLEANUP_GROQ_KEY, _CLEANUP_GROQ_CLIENT
+    key = (api_key or "").strip()
+    if not key or not _GROQ_AVAILABLE:
+        return None
+    if _CLEANUP_GROQ_CLIENT is None or _CLEANUP_GROQ_KEY != key:
+        _CLEANUP_GROQ_KEY = key
+        _CLEANUP_GROQ_CLIENT = Groq(api_key=key, timeout=1.8, max_retries=0)
+    return _CLEANUP_GROQ_CLIENT
+
+
 def try_cloud_llm_polish(raw_text: str, config: dict) -> str:
-    """Optional cloud/local LLM polish if API key is provided."""
-    groq_key = config.get("groq_api_key") or os.environ.get("GROQ_API_KEY")
-    if groq_key:
-        try:
-            req_data = json.dumps({
-                "model": "llama-3.3-70b-versatile",
-                "messages": [
-                    {"role": "system", "content": "You are Wispr Flow speech post-processor. Output ONLY the polished user intent with filler words and retractions removed. Never reply conversationally."},
-                    {"role": "user", "content": raw_text}
+    """Optional ultra-fast Groq Llama-3.1-8B-Instant polish used strictly in 'high' cleanup mode."""
+    groq_key = ((config or {}).get("groq_api_key") or "").strip() or (os.environ.get("GROQ_API_KEY") or "").strip()
+    if not groq_key:
+        return None
+    try:
+        client = _get_cleanup_groq_client(groq_key)
+        if client is not None:
+            completion = client.chat.completions.create(
+                model="llama-3.1-8b-instant",
+                messages=[
+                    {
+                        "role": "system",
+                        "content": (
+                            "You are a fast voice-to-text cleanup editor. "
+                            "Clean up filler words, stutters, self-corrections/retractions, punctuation, and grammar. "
+                            "Output ONLY the final cleaned text with zero commentary or preamble."
+                        ),
+                    },
+                    {"role": "user", "content": raw_text},
                 ],
-                "temperature": 0.0,
-                "max_tokens": 200
-            }).encode("utf-8")
-            req = urllib.request.Request("https://api.groq.com/openai/v1/chat/completions", data=req_data, headers={
-                "Authorization": f"Bearer {groq_key}",
-                "Content-Type": "application/json"
-            })
-            with urllib.request.urlopen(req, timeout=1.5) as resp:
-                res = json.loads(resp.read().decode("utf-8"))
-                return res["choices"][0]["message"]["content"].strip()
-        except Exception as e:
-            logging.debug(f"Cloud LLM polish skipped: {e}")
+                temperature=0.0,
+                max_tokens=512,
+            )
+            out = (completion.choices[0].message.content or "").strip()
+            return out or None
+
+        req_data = json.dumps({
+            "model": "llama-3.1-8b-instant",
+            "messages": [
+                {
+                    "role": "system",
+                    "content": (
+                        "You are a fast voice-to-text cleanup editor. "
+                        "Clean up filler words, stutters, self-corrections/retractions, punctuation, and grammar. "
+                        "Output ONLY the final cleaned text with zero commentary or preamble."
+                    ),
+                },
+                {"role": "user", "content": raw_text},
+            ],
+            "temperature": 0.0,
+            "max_tokens": 512,
+        }).encode("utf-8")
+        req = urllib.request.Request(
+            "https://api.groq.com/openai/v1/chat/completions",
+            data=req_data,
+            headers={"Authorization": f"Bearer {groq_key}", "Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(req, timeout=1.8) as resp:
+            res = json.loads(resp.read().decode("utf-8"))
+            return res["choices"][0]["message"]["content"].strip()
+    except Exception as e:
+        logging.debug(f"Cloud LLM polish skipped: {e}")
     return None
 
 def apply_smart_cleanup(raw_text: str, level: str = "medium", config: dict = None) -> str:
     """
-    Main cleanup entry point matching Wispr Flow levels:
+    Main cleanup entry point matching HushFlow levels:
     - none: Returns raw text verbatim
-    - light: Strips vocal fillers and cleans punctuation
-    - medium: Resolves self-corrections, strips fillers, smart punctuation (ZERO truncation)
-    - high: Full polish & conciseness
+    - light: Strips vocal fillers and cleans punctuation (<2ms local)
+    - medium: Resolves self-corrections, strips fillers, smart punctuation (<5ms local)
+    - high: Fast local cleanup + optional Groq Llama-3.1-8B-Instant polish when API key is set
     """
     if not raw_text or level == "none":
         return raw_text
-
-    if config:
-        llm_result = try_cloud_llm_polish(raw_text, config)
-        if llm_result:
-            return llm_result
 
     cleaned = raw_text
 
@@ -424,6 +470,13 @@ def apply_smart_cleanup(raw_text: str, level: str = "medium", config: dict = Non
         cleaned = resolve_self_corrections_iterative(cleaned)
         cleaned = clean_fillers(cleaned)
 
-    # Step 6: Final formatting
+    # Step 6: Final deterministic formatting
     cleaned = format_text(cleaned)
+
+    # Step 7: Optional fast cloud LLM polish strictly in 'high' mode
+    if level == "high" and config:
+        llm_result = try_cloud_llm_polish(cleaned, config)
+        if llm_result:
+            cleaned = llm_result
+
     return cleaned

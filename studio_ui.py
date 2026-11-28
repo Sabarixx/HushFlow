@@ -970,8 +970,8 @@ def build_studio_html(logo_data_uri: str = "") -> str:
     <div class="brand-row">
       {logo_html}
       <div>
-        <div class="brand-title">HushFlow <span class="version-tag" id="lbl-version">v2.1</span></div>
-        <div class="brand-sub">Offline Voice Dictation</div>
+        <div class="brand-title">HushFlow <span class="version-tag" id="lbl-version">v2.2</span></div>
+        <div class="brand-sub">Cloud Turbo + Local Fallback</div>
       </div>
     </div>
 
@@ -1029,8 +1029,8 @@ def build_studio_html(logo_data_uri: str = "") -> str:
         <div class="hero-card" id="hero-card">
           <div class="hero-left">
             <div class="hero-badge" id="hero-badge"><span class="status-dot" id="hero-dot"></span> <span id="hero-badge-txt">ENGINE STOPPED</span></div>
-            <h2 class="hero-h2" id="hero-title">Local Speech Engine Inactive</h2>
-            <p class="hero-p" id="hero-desc">Start the offline whisper engine to enable global voice dictation across any Windows app.</p>
+            <h2 class="hero-h2" id="hero-title">Speech Engine Inactive</h2>
+            <p class="hero-p" id="hero-desc">Start the speech engine to enable ultra-fast streaming voice dictation across any Windows app.</p>
           </div>
           <button class="btn-primary" id="hero-toggle-btn" onclick="toggleEngine()">Start Engine</button>
         </div>
@@ -1041,16 +1041,16 @@ def build_studio_html(logo_data_uri: str = "") -> str:
               <div class="metric-k">Speech Model</div>
               <span class="metric-chip cobalt"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/></svg></span>
             </div>
-            <div class="metric-v" id="stat-model">small.en-q5_1</div>
-            <div class="metric-s" id="stat-ram-foot">~190 MB GGML</div>
+            <div class="metric-v" id="stat-model">groq-whisper-large-v3-turbo</div>
+            <div class="metric-s" id="stat-ram-foot">Cloud ~150 ms</div>
           </div>
           <div class="metric-card">
             <div class="metric-top">
-              <div class="metric-k">CPU Allocation</div>
+              <div class="metric-k">Pipeline Mode</div>
               <span class="metric-chip ochre"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><path d="M9 1v3M15 1v3M9 20v3M15 20v3M20 9h3M20 14h3M1 9h3M1 14h3"/></svg></span>
             </div>
-            <div class="metric-v" id="stat-threads">Auto Threads</div>
-            <div class="metric-s">100% Local Inference</div>
+            <div class="metric-v" id="stat-threads">VAD Streaming</div>
+            <div class="metric-s" id="stat-engine-mode">Cloud + Local Fallback</div>
           </div>
           <div class="metric-card">
             <div class="metric-top">
@@ -1062,11 +1062,11 @@ def build_studio_html(logo_data_uri: str = "") -> str:
           </div>
           <div class="metric-card">
             <div class="metric-top">
-              <div class="metric-k">Audio Privacy</div>
+              <div class="metric-k">Audio Routing</div>
               <span class="metric-chip teal"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg></span>
             </div>
             <div class="metric-v" id="stat-privacy">RAM Only</div>
-            <div class="metric-s">Zero Cloud Telemetry</div>
+            <div class="metric-s" id="stat-privacy-sub">Zero Disk Audio Writes</div>
           </div>
         </div>
 
@@ -1165,19 +1165,41 @@ def build_studio_html(logo_data_uri: str = "") -> str:
           <div class="setting-row" style="flex-direction:column;align-items:stretch;gap:8px">
             <div style="display:flex;align-items:center;justify-content:space-between;gap:12px">
               <div>
-                <div class="setting-title">Local Whisper Model</div>
-                <div class="setting-desc">Quantized offline GGML model (switchable anytime)</div>
+                <div class="setting-title">Speech Engine & Model</div>
+                <div class="setting-desc" id="lbl-model-desc">Groq Cloud Whisper Turbo with automatic local fallback</div>
               </div>
               <div style="display:flex;align-items:center;gap:8px">
-                <select class="select-field" style="width:190px" id="set-model" onchange="onModelChanged()">
-                  <option value="small.en-q5_1">small.en-q5_1 (Balanced)</option>
-                  <option value="large-v3-turbo">large-v3-turbo (Best)</option>
-                  <option value="base.en">base.en (Ultra-Light)</option>
+                <select class="select-field" style="width:270px" id="set-model" onchange="onModelChanged()">
+                  <option value="groq-whisper-large-v3-turbo">Groq Whisper Large v3 Turbo (Cloud • Ultra-Fast)</option>
+                  <option value="groq-whisper-large-v3">Groq Whisper Large v3 (Cloud • Max Accuracy)</option>
+                  <option value="small.en-q5_1">small.en-q5_1 (Local Offline)</option>
+                  <option value="large-v3-turbo">large-v3-turbo (Local Offline)</option>
+                  <option value="base.en">base.en (Local Ultra-Light)</option>
                 </select>
                 <button class="btn-secondary" id="btn-dl-model" onclick="downloadSelectedModel()">Installed</button>
               </div>
             </div>
             <div class="prog-track"><div class="prog-fill" id="set-model-prog" style="width:100%"></div></div>
+          </div>
+          <div class="setting-row" style="flex-direction:column;align-items:stretch;gap:8px">
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:12px">
+              <div>
+                <div class="setting-title">Groq API Key</div>
+                <div class="setting-desc" id="lbl-groq-status">Optional for local mode • Required for Groq Cloud Turbo (~150 ms)</div>
+              </div>
+              <div style="display:flex;align-items:center;gap:6px">
+                <input class="input-field" style="width:220px;height:32px" type="password" id="in-groq-key" placeholder="gsk_... (or set GROQ_API_KEY)" />
+                <button class="btn-secondary" style="height:32px;padding:0 10px" id="btn-toggle-key" onclick="toggleGroqKeyVis()">Show</button>
+                <button class="btn-primary" style="height:32px;padding:0 12px" id="btn-save-key" onclick="saveGroqKey('in-groq-key')">Save &amp; Test</button>
+              </div>
+            </div>
+          </div>
+          <div class="setting-row">
+            <div>
+              <div class="setting-title">Live VAD Chunked Streaming</div>
+              <div class="setting-desc">Transcribe natural pauses while speaking so pasting is instant on key release</div>
+            </div>
+            <label class="switch"><input type="checkbox" id="chk-streaming-vad" onchange="onToggleSetting('streaming_vad_enabled', this.checked)" /><span class="slider"></span></label>
           </div>
         </div>
 
@@ -1204,7 +1226,7 @@ def build_studio_html(logo_data_uri: str = "") -> str:
           <div class="setting-row">
             <div>
               <div class="setting-title">Smart Cleanup Mode</div>
-              <div class="setting-desc">Filler word pruning & spoken retraction protection</div>
+              <div class="setting-desc">Light/Medium: &lt;5ms local rules &bull; High: Groq Llama-3.1-8B polish</div>
             </div>
             <div class="segmented" id="seg-cleanup">
               <button class="seg-btn" data-val="none" onclick="setCleanup('none')">None</button>
@@ -1312,24 +1334,28 @@ def build_studio_html(logo_data_uri: str = "") -> str:
       {onboard_logo_html}
       <div>
         <div class="page-title" style="font-size:19px">Welcome to HushFlow</div>
-        <div class="card-sub">Private offline voice dictation engineered for Windows.</div>
+        <div class="card-sub">Ultra-fast streaming voice dictation engineered for Windows.</div>
       </div>
     </div>
 
     <div class="onboard-step">
       <div class="onboard-step-t">
-        <span>1. Local-Only Privacy Guarantee</span>
-        <span style="color:var(--accent-mint-txt);font-size:11px;font-weight:600">100% Air-Gapped</span>
+        <span>1. Live VAD Streaming + Local Fallback</span>
+        <span style="color:var(--accent-mint-txt);font-size:11px;font-weight:600">Sub-Second Ready</span>
       </div>
-      <div class="onboard-step-p">Speech audio stays purely in local RAM via loopback whisper-server (127.0.0.1). No telemetry, accounts, or background microphone capture when idle.</div>
+      <div class="onboard-step-p">Speaks in live chunks to Groq Whisper Large-v3-Turbo for instant Wispr-style paste on key release, and falls back to local whisper-server (127.0.0.1) if offline.</div>
     </div>
 
     <div class="onboard-step">
       <div class="onboard-step-t">
-        <span>2. Speech Model Status</span>
+        <span>2. Groq Cloud Key &amp; Local Fallback</span>
         <button class="btn-secondary" style="height:26px;font-size:11px" id="onboard-dl-btn" onclick="onboardDownloadModel()">Checking...</button>
       </div>
-      <div class="onboard-step-p" id="onboard-model-desc">Verifying local quantized GGML model...</div>
+      <div class="onboard-step-p" id="onboard-model-desc">Paste a Groq API key below for ~150 ms cloud transcription, or keep using your local fallback model immediately.</div>
+      <div style="display:flex;gap:6px;margin-top:8px">
+        <input class="input-field" style="flex:1;height:30px" type="password" id="onboard-groq-key" placeholder="Optional: paste Groq API key (gsk_...)" />
+        <button class="btn-primary" style="height:30px;padding:0 12px;font-size:12px" onclick="saveGroqKey('onboard-groq-key')">Save &amp; Test</button>
+      </div>
       <div class="prog-track"><div class="prog-fill" id="onboard-prog" style="width:0%"></div></div>
     </div>
 
@@ -1389,10 +1415,13 @@ def build_studio_html(logo_data_uri: str = "") -> str:
     const running = !!snap.running;
     const cfg = snap.cfg || {{}};
     const hw = snap.hw || {{}};
-    const model = cfg.model || 'small.en-q5_1';
+    const model = cfg.model || 'groq-whisper-large-v3-turbo';
+    const isCloud = !!snap.is_cloud;
+    const hasKey = !!snap.has_groq_key;
+    const cloudActive = isCloud && hasKey;
 
-    document.getElementById('lbl-version').innerText = 'v' + (snap.version || '2.1.0');
-    document.getElementById('hw-subtitle').innerText = `${{hw.os || 'Windows'}} • ${{hw.ram || ''}} • Local Loopback`;
+    document.getElementById('lbl-version').innerText = 'v' + (snap.version || '2.2.0');
+    document.getElementById('hw-subtitle').innerText = `${{hw.os || 'Windows'}} • ${{hw.ram || ''}} • ${{cloudActive ? 'Groq Cloud Turbo' : 'Local Fallback'}}`;
 
     // Sidebar status
     const sDot = document.getElementById('sidebar-dot');
@@ -1409,12 +1438,14 @@ def build_studio_html(logo_data_uri: str = "") -> str:
 
     if (running) {{
       document.getElementById('sidebar-status-txt').innerText = 'Engine Online';
-      document.getElementById('sidebar-status-meta').innerText = snap.pids && snap.pids.length ? `PID ${{snap.pids[0]}} • Port 8080` : 'Port 8080 Active';
+      document.getElementById('sidebar-status-meta').innerText = cloudActive ? 'Groq Cloud • VAD Live' : (snap.pids && snap.pids.length ? `PID ${{snap.pids[0]}} • Local` : 'Local Server Active');
       sBtn.innerText = 'Stop Engine';
       sBtn.className = 'dock-btn stop';
-      document.getElementById('hero-badge-txt').innerText = 'ENGINE ACTIVE';
-      document.getElementById('hero-title').innerText = 'Local Speech Engine Active';
-      document.getElementById('hero-desc').innerText = 'Listening globally. Dictate anywhere in Windows using your Push-to-Talk or Hands-Free trigger.';
+      document.getElementById('hero-badge-txt').innerText = cloudActive ? 'CLOUD TURBO ACTIVE' : 'LOCAL ENGINE ACTIVE';
+      document.getElementById('hero-title').innerText = cloudActive ? 'Groq Cloud Turbo Active' : 'Speech Engine Active (Local)';
+      document.getElementById('hero-desc').innerText = cloudActive
+        ? 'Streaming live VAD chunks to Groq Whisper Large-v3-Turbo for instant paste on release.'
+        : (isCloud ? 'Running on tuned local fallback until you add a Groq API key in Settings.' : 'Listening globally with local whisper-server + live VAD chunking.');
       hBtn.innerText = 'Stop Engine';
       hBtn.className = 'btn-danger';
     }} else {{
@@ -1423,8 +1454,8 @@ def build_studio_html(logo_data_uri: str = "") -> str:
       sBtn.innerText = 'Start Engine';
       sBtn.className = 'dock-btn start';
       document.getElementById('hero-badge-txt').innerText = 'ENGINE STOPPED';
-      document.getElementById('hero-title').innerText = 'Local Speech Engine Inactive';
-      document.getElementById('hero-desc').innerText = 'Start the offline whisper engine to enable global voice dictation across any Windows app.';
+      document.getElementById('hero-title').innerText = 'Speech Engine Inactive';
+      document.getElementById('hero-desc').innerText = 'Start the speech engine to enable ultra-fast streaming voice dictation across any Windows app.';
       hBtn.innerText = 'Start Engine';
       hBtn.className = 'btn-primary';
     }}
@@ -1433,14 +1464,18 @@ def build_studio_html(logo_data_uri: str = "") -> str:
 
     // Metrics
     document.getElementById('stat-model').innerText = model;
-    document.getElementById('stat-ram-foot').innerText = snap.model_ram || '~190 MB GGML';
-    document.getElementById('stat-threads').innerText = hw.threads || 'Auto Threads';
+    document.getElementById('stat-ram-foot').innerText = snap.model_ram || 'Cloud ~150 ms';
+    document.getElementById('stat-threads').innerText = (cfg.streaming_vad_enabled !== false) ? 'Live VAD Stream' : 'Batch Release';
+    const engModeEl = document.getElementById('stat-engine-mode');
+    if (engModeEl) engModeEl.innerText = cloudActive ? 'Groq Cloud + Local Fallback' : (hw.threads || 'Local CPU');
     const ruleCount = Object.keys(cfg.word_replacements || {{}}).length;
     const vocabCount = (cfg.custom_vocabulary || []).length;
     document.getElementById('stat-lex').innerText = `${{ruleCount}} Rule${{ruleCount === 1 ? '' : 's'}}`;
     document.getElementById('stat-vocab').innerText = `${{vocabCount}} Vocab Terms`;
     document.getElementById('nav-lex-count').innerText = ruleCount;
-    document.getElementById('stat-privacy').innerText = cfg.save_training_audio ? 'Opt-In Vault' : 'RAM Only';
+    document.getElementById('stat-privacy').innerText = cloudActive ? 'Groq HTTPS' : (cfg.save_training_audio ? 'Opt-In Vault' : 'RAM Only');
+    const privSubEl = document.getElementById('stat-privacy-sub');
+    if (privSubEl) privSubEl.innerText = cloudActive ? 'In-Memory WAV • Zero Disk' : '100% Local Loopback';
     document.getElementById('hotkey-display').innerHTML = formatHotkey(cfg.hotkey || 'ctrl+alt');
     const dblOn = cfg.double_tap_lock !== false;
     const lockDisp = document.getElementById('lock-hotkey-display');
@@ -1465,7 +1500,20 @@ def build_studio_html(logo_data_uri: str = "") -> str:
     }});
 
     document.getElementById('set-model').value = model;
-    updateModelButtons(snap.model_ready, snap.model_size_mb);
+    updateModelButtons(snap);
+    const chkStream = document.getElementById('chk-streaming-vad');
+    if (chkStream) chkStream.checked = cfg.streaming_vad_enabled !== false;
+    const keyStatus = document.getElementById('lbl-groq-status');
+    const keyInput = document.getElementById('in-groq-key');
+    if (keyStatus && keyInput) {{
+      if (snap.has_groq_key) {{
+        keyStatus.innerText = `Groq key active (${{snap.groq_key_masked || 'configured'}}) • Cloud Turbo armed`;
+        keyInput.placeholder = snap.groq_key_masked || 'gsk_... (saved)';
+      }} else {{
+        keyStatus.innerText = 'No Groq key saved yet • Using local fallback until key is added';
+        keyInput.placeholder = 'gsk_... (or set GROQ_API_KEY)';
+      }}
+    }}
     const chkDbl = document.getElementById('chk-double-tap');
     if (chkDbl) chkDbl.checked = dblOn;
     document.getElementById('chk-hud').checked = !!cfg.hud_visible;
@@ -1489,12 +1537,29 @@ def build_studio_html(logo_data_uri: str = "") -> str:
     renderFeed(snap.feed || []);
   }}
 
-  function updateModelButtons(isReady, sizeMb) {{
+  function updateModelButtons(snap) {{
     const sBtn = document.getElementById('btn-dl-model');
     const sProg = document.getElementById('set-model-prog');
     const oBtn = document.getElementById('onboard-dl-btn');
     const oDesc = document.getElementById('onboard-model-desc');
     const oProg = document.getElementById('onboard-prog');
+    const isCloud = !!(snap && snap.is_cloud);
+    const hasKey = !!(snap && snap.has_groq_key);
+    const isReady = !!(snap && snap.model_ready);
+    const sizeMb = (snap && snap.model_size_mb) || 190;
+
+    if (isCloud) {{
+      sBtn.innerText = hasKey ? 'Cloud Ready' : (snap.fallback_ready ? 'Fallback Ready' : 'Key Needed');
+      sBtn.disabled = true;
+      sProg.style.width = hasKey ? '100%' : '45%';
+      oBtn.innerText = hasKey ? 'Cloud Ready' : (snap.fallback_ready ? 'Fallback Ready' : 'Key Optional');
+      oBtn.disabled = true;
+      oDesc.innerText = hasKey
+        ? 'Groq Cloud Whisper Turbo is armed with live VAD streaming!'
+        : 'Paste your Groq API key below for ~150 ms cloud transcription (local fallback is already ready).';
+      oProg.style.width = hasKey ? '100%' : '50%';
+      return;
+    }}
 
     if (isReady) {{
       sBtn.innerText = 'Installed';
@@ -1505,12 +1570,12 @@ def build_studio_html(logo_data_uri: str = "") -> str:
       oDesc.innerText = 'Local quantized speech model detected and verified.';
       oProg.style.width = '100%';
     }} else {{
-      sBtn.innerText = `Download (${{sizeMb || 190}} MB)`;
+      sBtn.innerText = `Download (${{sizeMb}} MB)`;
       sBtn.disabled = false;
       sProg.style.width = '0%';
-      oBtn.innerText = `Download (${{sizeMb || 190}} MB)`;
+      oBtn.innerText = `Download (${{sizeMb}} MB)`;
       oBtn.disabled = false;
-      oDesc.innerText = `Download local GGML model (${{sizeMb || 190}} MB) to transcribe offline.`;
+      oDesc.innerText = `Download local GGML model (${{sizeMb}} MB) to transcribe offline.`;
       oProg.style.width = '0%';
     }}
   }}
@@ -1628,6 +1693,25 @@ def build_studio_html(logo_data_uri: str = "") -> str:
     const raw = document.getElementById('set-mic').value;
     const val = raw === '__default__' ? null : parseInt(raw, 10);
     applySnapshot(await window.pywebview.api.update_setting('mic_device', val));
+  }}
+  function toggleGroqKeyVis() {{
+    const inp = document.getElementById('in-groq-key');
+    const btn = document.getElementById('btn-toggle-key');
+    if (!inp || !btn) return;
+    inp.type = inp.type === 'password' ? 'text' : 'password';
+    btn.innerText = inp.type === 'password' ? 'Show' : 'Hide';
+  }}
+  async function saveGroqKey(inputId) {{
+    const inp = document.getElementById(inputId);
+    const val = inp ? inp.value.trim() : '';
+    const st = document.getElementById('lbl-groq-status');
+    if (st) st.innerText = val ? 'Testing Groq connection...' : 'Clearing key...';
+    const snap = await window.pywebview.api.save_groq_api_key(val, true);
+    if (inp) inp.value = '';
+    applySnapshot(snap);
+    if (st && snap && snap.key_message) st.innerText = snap.key_message;
+    const oDesc = document.getElementById('onboard-model-desc');
+    if (oDesc && snap && snap.key_message) oDesc.innerText = snap.key_message;
   }}
   async function onModelChanged() {{
     const val = document.getElementById('set-model').value;

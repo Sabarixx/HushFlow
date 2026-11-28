@@ -8,15 +8,16 @@ ROOT_DIR = os.path.dirname(SPEC_DIR)
 wv_datas, wv_bins, wv_hidden = collect_all("webview")
 pn_datas, pn_bins, pn_hidden = collect_all("pythonnet")
 cl_datas, cl_bins, cl_hidden = collect_all("clr_loader")
+gq_datas, gq_bins, gq_hidden = collect_all("groq")
 ctk_datas = collect_data_files("customtkinter")
 
-datas = ctk_datas + wv_datas + pn_datas + cl_datas + [
+datas = ctk_datas + wv_datas + pn_datas + cl_datas + gq_datas + [
     (os.path.join(ROOT_DIR, "assets", "hushflow.ico"), "assets"),
     (os.path.join(ROOT_DIR, "assets", "hushflow_logo.png"), "assets"),
     (os.path.join(ROOT_DIR, "whisper_flow.ico"), "."),
 ]
 
-binaries = wv_bins + pn_bins + cl_bins + [
+binaries = wv_bins + pn_bins + cl_bins + gq_bins + [
     (os.path.join(ROOT_DIR, "bin", "whisper-server.exe"), "bin"),
     (os.path.join(ROOT_DIR, "bin", "whisper-cli.exe"), "bin"),
 ]
@@ -26,7 +27,14 @@ hiddenimports = list(
         wv_hidden
         + pn_hidden
         + cl_hidden
+        + gq_hidden
         + [
+            "asr_pipeline",
+            "groq",
+            "httpx",
+            "httpcore",
+            "anyio",
+            "pydantic",
             "webview",
             "pythonnet",
             "clr_loader",

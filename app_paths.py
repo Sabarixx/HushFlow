@@ -13,9 +13,9 @@ from typing import Dict, List, Optional, Tuple
 import psutil
 
 APP_NAME = "HushFlow"
-APP_VERSION = "2.1.0"
+APP_VERSION = "2.2.0"
 APP_PUBLISHER = "HushFlow"
-APP_TAGLINE = "Private Offline Voice Dictation"
+APP_TAGLINE = "Ultra-Fast Voice Dictation (Cloud Turbo + Local Fallback)"
 REPO_URL = "https://github.com/Sabarixx/HushFlow"
 
 STUDIO_IPC_PORT = 48765
@@ -39,23 +39,44 @@ SERVER_LOG_FILE = os.path.join(LOGS_DIR, "whisper_server.log")
 PID_FILE = os.path.join(USER_DATA_DIR, "hushflow.pid")
 
 MODEL_REGISTRY = {
+    "groq-whisper-large-v3-turbo": {
+        "backend": "groq",
+        "api_model": "whisper-large-v3-turbo",
+        "filename": "",
+        "label": "Groq Whisper Large v3 Turbo (Cloud • Ultra-Fast)",
+        "size_mb": 0,
+        "ram_mb": "Cloud ~150 ms",
+        "url": "",
+    },
+    "groq-whisper-large-v3": {
+        "backend": "groq",
+        "api_model": "whisper-large-v3",
+        "filename": "",
+        "label": "Groq Whisper Large v3 (Cloud • Max Accuracy)",
+        "size_mb": 0,
+        "ram_mb": "Cloud ~250 ms",
+        "url": "",
+    },
     "small.en-q5_1": {
+        "backend": "local",
         "filename": "ggml-small.en-q5_1.bin",
-        "label": "Small English (Balanced)",
+        "label": "Small English (Local Offline)",
         "size_mb": 190,
         "ram_mb": "~190 MB",
         "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.en-q5_1.bin",
     },
     "large-v3-turbo": {
+        "backend": "local",
         "filename": "ggml-large-v3-turbo-q5_0.bin",
-        "label": "Large v3 Turbo (High Accuracy)",
+        "label": "Large v3 Turbo (Local Offline)",
         "size_mb": 574,
         "ram_mb": "~574 MB",
         "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo-q5_0.bin",
     },
     "base.en": {
+        "backend": "local",
         "filename": "ggml-base.en.bin",
-        "label": "Base English (Ultra-Light)",
+        "label": "Base English (Local Ultra-Light)",
         "size_mb": 148,
         "ram_mb": "~148 MB",
         "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin",
@@ -63,6 +84,12 @@ MODEL_REGISTRY = {
 }
 
 MODEL_ALIASES = {
+    "groq": "groq-whisper-large-v3-turbo",
+    "groq-turbo": "groq-whisper-large-v3-turbo",
+    "whisper-large-v3-turbo": "groq-whisper-large-v3-turbo",
+    "groq-whisper-large-v3-turbo": "groq-whisper-large-v3-turbo",
+    "groq-whisper-large-v3": "groq-whisper-large-v3",
+    "whisper-large-v3": "groq-whisper-large-v3",
     "small": "small.en-q5_1",
     "small.en": "small.en-q5_1",
     "small.en-q5_1": "small.en-q5_1",
@@ -75,7 +102,11 @@ MODEL_ALIASES = {
 
 DEFAULT_CONFIG = {
     "cleanup_level": "medium",
-    "model": "small.en-q5_1",
+    "model": "groq-whisper-large-v3-turbo",
+    "local_fallback_model": "small.en-q5_1",
+    "groq_api_key": "",
+    "language": "en",
+    "streaming_vad_enabled": True,
     "hud_visible": True,
     "hotkey": "ctrl+alt",
     "toggle_hotkey": "ctrl+alt+space",
@@ -116,8 +147,21 @@ def find_binary(filename: str) -> str:
 
 def canonical_model_key(model_name: Optional[str]) -> str:
     if not model_name:
-        return "small.en-q5_1"
-    return MODEL_ALIASES.get(model_name.strip().lower(), "small.en-q5_1")
+        return "groq-whisper-large-v3-turbo"
+    return MODEL_ALIASES.get(model_name.strip().lower(), "groq-whisper-large-v3-turbo")
+
+
+def is_cloud_model(model_name: Optional[str]) -> bool:
+    key = canonical_model_key(model_name)
+    return MODEL_REGISTRY.get(key, {}).get("backend") == "groq"
+
+
+def get_groq_api_key(cfg: Optional[Dict] = None) -> str:
+    if cfg and isinstance(cfg, dict):
+        k = (cfg.get("groq_api_key") or "").strip()
+        if k:
+            return k
+    return (os.environ.get("GROQ_API_KEY") or "").strip()
 
 
 def get_model_search_dirs() -> List[str]:
@@ -146,8 +190,10 @@ def get_model_search_dirs() -> List[str]:
 
 
 def resolve_model_path(model_name: Optional[str] = None, fallback_any: bool = True) -> str:
-    """Locate the GGML model binary on disk, or return the target destination inside MODELS_DIR."""
+    """Locate the local GGML model binary on disk, or return the target destination inside MODELS_DIR."""
     key = canonical_model_key(model_name)
+    if is_cloud_model(key):
+        key = canonical_model_key("small.en-q5_1")
     target_filename = MODEL_REGISTRY[key]["filename"]
     search_dirs = get_model_search_dirs()
 
@@ -159,6 +205,8 @@ def resolve_model_path(model_name: Optional[str] = None, fallback_any: bool = Tr
     if fallback_any:
         for d in search_dirs:
             for meta in MODEL_REGISTRY.values():
+                if not meta.get("filename"):
+                    continue
                 candidate = os.path.join(d, meta["filename"])
                 if os.path.exists(candidate):
                     return candidate
@@ -167,7 +215,18 @@ def resolve_model_path(model_name: Optional[str] = None, fallback_any: bool = Tr
 
 
 def model_exists(model_name: Optional[str] = None) -> bool:
-    return os.path.exists(resolve_model_path(model_name, fallback_any=False))
+    key = canonical_model_key(model_name)
+    if is_cloud_model(key):
+        return bool(get_groq_api_key(load_config()))
+    return os.path.exists(resolve_model_path(key, fallback_any=False))
+
+
+def fallback_model_exists(cfg: Optional[Dict] = None) -> bool:
+    cfg = cfg or load_config()
+    fb = cfg.get("local_fallback_model", "small.en-q5_1")
+    if is_cloud_model(fb):
+        fb = "small.en-q5_1"
+    return os.path.exists(resolve_model_path(fb, fallback_any=True))
 
 
 def _ensure_dirs():
